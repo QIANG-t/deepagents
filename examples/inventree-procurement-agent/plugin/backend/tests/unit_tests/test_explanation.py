@@ -9,7 +9,9 @@ from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
-from inventree_procurement_plugin.explanation import ExplanationFailed, ExplanationUnavailable, generate_explanation
+from inventree_procurement_plugin.explanation import (
+    ExplanationFailed, ExplanationUnavailable, _with_verified_digest, generate_explanation,
+)
 
 
 class AIMessage:
@@ -136,6 +138,16 @@ class ExplanationTests(unittest.TestCase):
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}):
             with self.assertRaises(ExplanationFailed):
                 generate_explanation({"lines": ["x" * 40_000]}, "digest")
+
+    def test_complete_digest_is_appended_only_when_model_abbreviates_it(self):
+        digest = "a" * 64
+        self.assertEqual(
+            _with_verified_digest("已核实：摘要 aaaa…aaaa", digest),
+            f"已核实：摘要 aaaa…aaaa\n\n服务端校验快照摘要：{digest}",
+        )
+        self.assertEqual(_with_verified_digest(f"快照摘要：{digest}", digest), f"快照摘要：{digest}")
+        with self.assertRaises(ExplanationFailed):
+            _with_verified_digest("x" * 3990, digest)
 
 
 if __name__ == "__main__":

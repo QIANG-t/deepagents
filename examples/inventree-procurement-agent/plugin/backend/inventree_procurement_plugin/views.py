@@ -3,6 +3,7 @@
 import json
 import uuid
 from datetime import timedelta
+from hashlib import sha256
 
 from django.db import transaction
 from django.http import HttpRequest, JsonResponse
@@ -13,6 +14,8 @@ from django.views.decorators.http import require_GET, require_http_methods
 
 from .access import read_status
 from .service import BusinessReadDenied, BuildMissing, check_business_read_permissions, create_analysis_task
+from .quote import MAX_QUOTE_BYTES, QuoteFailed, QuoteUnavailable, compare_quote, extract_quote
+from .quote_service import SupplierPartMissing, check_supplier_read_permissions, supplier_part_snapshot
 
 MAX_BUILD_ID = 2_147_483_647
 
@@ -219,3 +222,125 @@ def _release_explanation_claim(task_id: str, owner_id: int, run_id: uuid.UUID) -
             task.explanation_started_at = None
             task.explanation_run_id = None
             task.save(update_fields=["explanation_started_at", "explanation_run_id", "updated_at"])
+
+
+def _quote_input(request: HttpRequest) -> tuple[int, str]:
+    if request.content_type != "application/json" or len(request.body) > MAX_QUOTE_BYTES * 6 + 2048:
+        raise ValueError("A small application/json body is required")
+    try:
+        payload = json.loads(request.body)
+    except (ValueError, UnicodeDecodeError) as error:
+        raise ValueError("Malformed JSON") from error
+    if not isinstance(payload, dict) or set(payload) != {"supplier_part_id", "text"}:
+        raise ValueError("Expected supplier_part_id and text")
+    supplier_part_id, source_text = payload["supplier_part_id"], payload["text"]
+    if (type(supplier_part_id) is not int or not 0 < supplier_part_id <= MAX_BUILD_ID or
+            not isinstance(source_text, str) or not source_text.strip() or
+            len(source_text.encode("utf-8")) > MAX_QUOTE_BYTES or "\x00" in source_text):
+        raise ValueError("A valid SupplierPart ID and nonempty text of at most 8192 bytes are required")
+    return supplier_part_id, source_text
+
+
+@csrf_exempt  # Authenticate and check ownership before the protected POST helper.
+@require_http_methods(["GET", "POST"])
+def task_quote(request: HttpRequest, task_id: str) -> JsonResponse:
+    """Read or create one immutable pasted quote for an owned analysis task."""
+    denial = _denied(request)
+    if denial is not None:
+        return denial
+    from .models import ProcurementTask
+
+    task = get_object_or_404(ProcurementTask, pk=task_id, owner_id=request.user.pk)
+    denial = _business_denial(request)
+    if denial is not None:
+        return denial
+    if not task.preview or not task.snapshot_digest:
+        return JsonResponse({"error": "Preview is not available", "code": "preview_unavailable"}, status=409)
+    if request.method == "POST":
+        return _create_task_quote(request, task_id)
+    try:
+        check_supplier_read_permissions(request.user)
+    except BusinessReadDenied:
+        return JsonResponse({"error": "Supplier pricing read permission denied", "code": "forbidden"}, status=403)
+    if not task.quote:
+        return JsonResponse({"error": "Quote has not been extracted", "code": "quote_unavailable"}, status=409)
+    try:
+        supplier_part_snapshot(request.user, task.quote["supplier_part_id"], task.preview)
+    except BusinessReadDenied:
+        return JsonResponse({"error": "Supplier pricing read permission denied", "code": "forbidden"}, status=403)
+    except SupplierPartMissing:
+        return JsonResponse({"error": "Linked SupplierPart was not found", "code": "supplier_part_not_found"}, status=404)
+    return JsonResponse({"quote": task.quote})
+
+
+@csrf_protect
+def _create_task_quote(request: HttpRequest, task_id: str) -> JsonResponse:
+    try:
+        supplier_part_id, source_text = _quote_input(request)
+    except ValueError as error:
+        return JsonResponse({"error": str(error), "code": "invalid_request"}, status=400)
+    from .models import ProcurementTask
+
+    task = ProcurementTask.objects.get(pk=task_id, owner_id=request.user.pk)
+    try:
+        supplier_snapshot = supplier_part_snapshot(request.user, supplier_part_id, task.preview)
+    except BusinessReadDenied:
+        return JsonResponse({"error": "Supplier pricing read permission denied", "code": "forbidden"}, status=403)
+    except SupplierPartMissing:
+        return JsonResponse({"error": "Linked SupplierPart was not found", "code": "supplier_part_not_found"}, status=404)
+    source_hash = sha256(source_text.encode("utf-8")).hexdigest()
+    with transaction.atomic():
+        task = ProcurementTask.objects.select_for_update().get(pk=task_id, owner_id=request.user.pk)
+        if task.quote:
+            same_source = (task.quote.get("supplier_part_id") == supplier_part_id and
+                           task.quote.get("source_sha256") == source_hash and
+                           task.quote.get("source_text") == source_text)
+            if same_source:
+                return JsonResponse({"quote": task.quote})
+            return JsonResponse({"error": "Quote source cannot be changed on this task",
+                                 "code": "quote_immutable"}, status=409)
+        now = timezone.now()
+        if task.quote_started_at and task.quote_started_at > now - timedelta(seconds=60):
+            return JsonResponse({"error": "Quote extraction is in progress", "code": "quote_busy"}, status=409)
+        run_id = uuid.uuid4()
+        digest = task.snapshot_digest
+        task.quote_run_id = run_id
+        task.quote_started_at = now
+        task.save(update_fields=["quote_run_id", "quote_started_at", "updated_at"])
+    try:
+        extraction = extract_quote(source_text, supplier_snapshot)
+    except (QuoteUnavailable, QuoteFailed) as error:
+        _release_quote_claim(task_id, request.user.pk, run_id)
+        unavailable = isinstance(error, QuoteUnavailable)
+        return JsonResponse({"error": "Quote service is unavailable" if unavailable else "Quote extraction failed",
+                             "code": "quote_unavailable" if unavailable else "quote_failed"},
+                            status=503 if unavailable else 502)
+    except Exception:
+        _release_quote_claim(task_id, request.user.pk, run_id)
+        return JsonResponse({"error": "Quote extraction failed", "code": "quote_failed"}, status=502)
+    quote = {"supplier_part_id": supplier_part_id, "source_sha256": source_hash,
+             "source_text": source_text, "created_at": timezone.now().isoformat(),
+             "extracted": extraction["extracted"],
+             "checks": compare_quote(extraction["extracted"], supplier_snapshot),
+             "tool_calls": extraction["tool_calls"], "model": extraction["model"]}
+    with transaction.atomic():
+        task = ProcurementTask.objects.select_for_update().get(pk=task_id, owner_id=request.user.pk)
+        if task.quote_run_id != run_id or task.snapshot_digest != digest:
+            return JsonResponse({"error": "Snapshot changed during extraction",
+                                 "code": "snapshot_changed"}, status=409)
+        task.quote = quote
+        task.quote_run_id = None
+        task.quote_started_at = None
+        task.save(update_fields=["quote", "quote_run_id", "quote_started_at", "updated_at"])
+    return JsonResponse({"quote": quote}, status=201)
+
+
+def _release_quote_claim(task_id: str, owner_id: int, run_id: uuid.UUID) -> None:
+    from .models import ProcurementTask
+
+    with transaction.atomic():
+        task = ProcurementTask.objects.select_for_update().get(pk=task_id, owner_id=owner_id)
+        if task.quote_run_id == run_id:
+            task.quote_run_id = None
+            task.quote_started_at = None
+            task.save(update_fields=["quote_run_id", "quote_started_at", "updated_at"])

@@ -4,6 +4,7 @@ import * as React from 'react';
 import { displayFact, parseBuildId, parseCreatedTask, parsePreview, parseTasks, requestError } from './contracts';
 import type { Preview, PreviewLine, PreviewPart, Task } from './contracts';
 import { ExplanationPanel } from './ExplanationPanel';
+import { QuotePanel } from './QuotePanel';
 
 const BASE_URL = '/plugin/inventree_procurement/';
 type LoadState = 'idle' | 'checking' | 'available' | 'unavailable';
@@ -260,10 +261,12 @@ function ProcurementPanel({ context }: { context: InvenTreePluginContext }) {
           {previewState === 'available' && preview && selectedTask &&
             <ExplanationPanel key={selectedTask} context={context} taskId={selectedTask}
               snapshotDigest={preview.snapshot_digest} />}
+          {previewState === 'available' && preview && selectedTask &&
+            <QuotePanel key={`quote-${selectedTask}`} context={context} taskId={selectedTask} />}
         </Stack>
 
         <Text size="xs" c="dimmed">
-          数据来源：插件任务、BuildLine 与 Part 只读接口。供应商报价和采购执行尚未接入。
+          数据来源：插件任务、BuildLine、Part 与已关联 SupplierPart 的只读接口。报价原文需人工粘贴；采购执行尚未接入。
         </Text>
         <Button variant="light" size="xs" onClick={() => setRefresh((value) => value + 1)}>
           刷新任务列表

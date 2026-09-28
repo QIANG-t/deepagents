@@ -21,6 +21,16 @@ class ExplanationFailed(Exception):
     """The provider failed or returned an unverified explanation."""
 
 
+def _with_verified_digest(text: str, snapshot_digest: str) -> str:
+    """Keep the complete server-verified snapshot ID visible in the explanation."""
+    content = text.strip()
+    if snapshot_digest not in content:
+        content += f"\n\n服务端校验快照摘要：{snapshot_digest}"
+    if len(content) > MAX_TEXT_CHARS:
+        raise ExplanationFailed("Explanation output was invalid")
+    return content
+
+
 def generate_explanation(preview: dict, snapshot_digest: str) -> dict:
     """Generate one explanation only after the snapshot tool really ran."""
     api_key = os.environ.get("DEEPSEEK_API_KEY", "").strip()
@@ -99,7 +109,7 @@ def generate_explanation(preview: dict, snapshot_digest: str) -> dict:
                 "你是 InvenTree 采购分析的只读解释助手。回答前必须恰好调用一次 "
                 "read_task_snapshot，只能依据工具返回的快照。全程使用简体中文，分为“已核实事实”“来源”"
                 "和“未核实事项”三段，每段尽量简短。说明同一 Part 的库存只计一次，标明 Build、"
-                "BuildLine、Part ID 和快照摘要。报价、交期、在途供应、替代料及可选或消耗性物料"
+                "BuildLine、Part ID 和完整的 64 位快照摘要，不要缩写。报价、交期、在途供应、替代料及可选或消耗性物料"
                 "策略若没有证据，明确写未核实。初步缺口不能当作采购建议；不要建议下单数量，"
                 "不要声称已经审批或创建采购单，也不要编造任何数值。"
             ),
@@ -127,10 +137,10 @@ def generate_explanation(preview: dict, snapshot_digest: str) -> dict:
         raise ExplanationFailed("Snapshot tool execution could not be verified")
     last = messages[-1] if messages else None
     text = getattr(last, "content", None)
-    if not isinstance(text, str) or not text.strip() or len(text) > MAX_TEXT_CHARS:
+    if not isinstance(text, str) or not text.strip():
         raise ExplanationFailed("Explanation output was invalid")
     return {
-        "text": text.strip(),
+        "text": _with_verified_digest(text, snapshot_digest),
         "model": MODEL,
         "snapshot_digest": snapshot_digest,
         "tool_calls": [{

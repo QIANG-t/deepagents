@@ -59,6 +59,27 @@ export type Explanation = {
   tool_calls: { name: string; status: string; tool_call_id: string; result_sha256: string }[];
 };
 
+export const QUOTE_FIELD_LABELS = {
+  supplier_name: '供应商名称', sku: '供应商料号', unit_price: '单价',
+  currency: '币种', price_unit: '计价单位', pack_quantity: '包装数量',
+  valid_until: '报价有效期', lead_time: '交期'
+} as const;
+
+export type QuoteFieldName = keyof typeof QUOTE_FIELD_LABELS;
+export type QuoteEvidence = { value: string; evidence: string; start: number; end: number };
+export type Quote = {
+  supplier_part_id: number;
+  source_sha256: string;
+  source_text: string;
+  created_at: string;
+  model: string;
+  extracted: Record<QuoteFieldName, QuoteEvidence | null>;
+  checks: { field: string; status: 'match' | 'conflict' | 'unverified'; message: string }[];
+  tool_calls: { name: 'read_quote_snapshot'; status: 'success'; tool_call_id: string; result_sha256: string }[];
+};
+
+export const MAX_QUOTE_BYTES = 8192;
+
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -86,6 +107,18 @@ export function parseBuildId(value: string): number | null {
   if (!/^[1-9][0-9]*$/.test(value)) return null;
   const buildId = id(Number(value));
   return buildId !== null && buildId <= 2147483647 ? buildId : null;
+}
+
+export function parseSupplierPartId(value: string): number | null {
+  return parseBuildId(value);
+}
+
+export function quoteByteLength(value: string): number {
+  return new TextEncoder().encode(value).length;
+}
+
+export function validQuoteText(value: string): boolean {
+  return value.trim().length > 0 && quoteByteLength(value) <= MAX_QUOTE_BYTES;
 }
 
 export function parseTask(value: unknown): Task | null {
@@ -206,6 +239,51 @@ export function parseExplanation(value: unknown): Explanation | null {
 
 export function isCurrentExplanation(explanation: Explanation, snapshotDigest: string): boolean {
   return explanation.snapshot_digest === snapshotDigest;
+}
+
+function parseQuoteEvidence(value: unknown, sourceText: string): QuoteEvidence | null | undefined {
+  if (value === null) return null;
+  const item = record(value);
+  if (!item || typeof item.value !== 'string' || !item.value.trim() ||
+      typeof item.evidence !== 'string' || !item.evidence.trim() ||
+      typeof item.start !== 'number' || !Number.isSafeInteger(item.start) || item.start < 0 ||
+      typeof item.end !== 'number' || !Number.isSafeInteger(item.end) || item.end <= item.start ||
+      Array.from(sourceText).slice(item.start, item.end).join('') !== item.evidence) return undefined;
+  return { value: item.value, evidence: item.evidence, start: item.start, end: item.end };
+}
+
+export function parseQuote(value: unknown): Quote | null {
+  const quote = record(record(value)?.quote);
+  const extracted = record(quote?.extracted);
+  if (!quote || id(quote.supplier_part_id) === null ||
+      typeof quote.source_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(quote.source_sha256) ||
+      typeof quote.source_text !== 'string' || !validQuoteText(quote.source_text) ||
+      typeof quote.created_at !== 'string' || !quote.created_at.trim() ||
+      typeof quote.model !== 'string' || !quote.model.trim() || !extracted ||
+      !Array.isArray(quote.checks) || !Array.isArray(quote.tool_calls) || quote.tool_calls.length !== 1) return null;
+  const fields = {} as Record<QuoteFieldName, QuoteEvidence | null>;
+  for (const name of Object.keys(QUOTE_FIELD_LABELS) as QuoteFieldName[]) {
+    const parsed = parseQuoteEvidence(extracted[name], quote.source_text);
+    if (parsed === undefined) return null;
+    fields[name] = parsed;
+  }
+  const checks = quote.checks.map(record);
+  if (checks.some((check) => !check || typeof check.field !== 'string' || !check.field.trim() ||
+      !['match', 'conflict', 'unverified'].includes(check.status as string) ||
+      typeof check.message !== 'string' || !check.message.trim())) return null;
+  const calls = quote.tool_calls.map(record);
+  if (calls.some((call) => !call || call.name !== 'read_quote_snapshot' || call.status !== 'success' ||
+      typeof call.tool_call_id !== 'string' || !call.tool_call_id.trim() ||
+      typeof call.result_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(call.result_sha256))) return null;
+  return {
+    supplier_part_id: quote.supplier_part_id as number,
+    source_sha256: quote.source_sha256, source_text: quote.source_text,
+    created_at: quote.created_at, model: quote.model, extracted: fields,
+    checks: checks.map((check) => ({ field: check!.field as string,
+      status: check!.status as 'match' | 'conflict' | 'unverified', message: check!.message as string })),
+    tool_calls: calls.map((call) => ({ name: 'read_quote_snapshot', status: 'success',
+      tool_call_id: call!.tool_call_id as string, result_sha256: call!.result_sha256 as string }))
+  };
 }
 
 export function responseStatus(error: unknown): number | null {

@@ -74,6 +74,9 @@ class FakeTask:
         self.explanation = {}
         self.explanation_started_at = None
         self.explanation_run_id = None
+        self.quote = {}
+        self.quote_started_at = None
+        self.quote_run_id = None
 
     def save(self, update_fields):
         self.updated_at = datetime(2026, 9, 28, tzinfo=timezone.utc)
@@ -266,6 +269,71 @@ class ViewTests(unittest.TestCase):
                 patch.object(self.views, "create_analysis_task", side_effect=BuildMissing()):
             response = self.views.tasks(request)
         self.assertEqual(response.status_code, 404)
+
+    def test_quote_input_rejects_invalid_ids_and_oversized_text(self) -> None:
+        for supplier_id, source in ((True, "报价"), (0, "报价"), (1, " "),
+                                    (1, "字" * 3000)):
+            request = FakeRequest(FakeUser(True, 7), method="POST",
+                                  body=json.dumps({"supplier_part_id": supplier_id,
+                                                   "text": source}).encode())
+            with self.assertRaises(ValueError):
+                self.views._quote_input(request)
+
+        escaped_source = "字" * 2000  # 6 KiB of text, 12 KiB after JSON escaping.
+        request = FakeRequest(
+            FakeUser(True, 7), method="POST",
+            body=json.dumps({"supplier_part_id": 1, "text": escaped_source}).encode(),
+        )
+        self.assertEqual(self.views._quote_input(request), (1, escaped_source))
+
+    def test_quote_owner_and_supplier_permissions_precede_model(self) -> None:
+        from inventree_procurement_plugin.service import BusinessReadDenied
+
+        task = FakeTask(7)
+        manager = FakeManager([task])
+        models = types.ModuleType("inventree_procurement_plugin.models")
+        models.ProcurementTask = types.SimpleNamespace(objects=manager)
+        request = FakeRequest(FakeUser(True, 7), method="POST",
+                              body=b'{"supplier_part_id":1,"text":"USD 10"}')
+        with patch.dict(sys.modules, {"inventree_procurement_plugin.models": models}), \
+                patch.object(self.views, "check_business_read_permissions"), \
+                patch.object(self.views, "supplier_part_snapshot", side_effect=BusinessReadDenied()), \
+                patch.object(self.views, "extract_quote") as model:
+            response = self.views.task_quote(request, "task-1")
+            self.assertEqual(response.status_code, 403)
+            with self.assertRaises(LookupError):
+                self.views.task_quote(FakeRequest(FakeUser(True, 8)), "task-1")
+        model.assert_not_called()
+
+    def test_quote_creation_is_cached_and_source_cannot_change(self) -> None:
+        task = FakeTask(7)
+        task.preview = {"parts": [{"part_id": 3}]}
+        manager = FakeManager([task])
+        models = types.ModuleType("inventree_procurement_plugin.models")
+        models.ProcurementTask = types.SimpleNamespace(objects=manager)
+        source = "SKU X-2"
+        request = FakeRequest(FakeUser(True, 7), method="POST",
+                              body=json.dumps({"supplier_part_id": 1, "text": source}).encode())
+        snapshot = {"supplier_name": "Acme", "sku": "X-2", "pack_quantity_native": None}
+        extracted = {field: None for field in ("supplier_name", "sku", "unit_price",
+                    "currency", "price_unit", "pack_quantity", "valid_until", "lead_time")}
+        with patch.dict(sys.modules, {"inventree_procurement_plugin.models": models}), \
+                patch.object(self.views, "check_business_read_permissions"), \
+                patch.object(self.views, "check_supplier_read_permissions"), \
+                patch.object(self.views, "supplier_part_snapshot", return_value=snapshot), \
+                patch.object(self.views, "extract_quote", return_value={
+                    "extracted": extracted, "tool_calls": [], "model": "deepseek-flash"}) as model:
+            first = self.views.task_quote(request, "task-1")
+            second = self.views.task_quote(request, "task-1")
+            read = self.views.task_quote(FakeRequest(FakeUser(True, 7)), "task-1")
+            request.body = b'{"supplier_part_id":1,"text":"changed"}'
+            changed = self.views.task_quote(request, "task-1")
+        self.assertEqual(first.status_code, 201)
+        self.assertEqual(second.status_code, 200)
+        self.assertEqual(read.status_code, 200)
+        self.assertEqual(changed.status_code, 409)
+        self.assertEqual(first.data["quote"]["source_text"], source)
+        model.assert_called_once()
 
 
 if __name__ == "__main__":

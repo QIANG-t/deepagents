@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { displayFact, isCurrentExplanation, parseBuildId, parseCreatedTask, parseExplanation, parsePreview, requestError, responseCode, responseStatus } from './contracts.ts';
+import { displayFact, isCurrentExplanation, MAX_QUOTE_BYTES, parseBuildId, parseCreatedTask, parseExplanation, parsePreview, parseQuote, parseSupplierPartId, quoteByteLength, requestError, responseCode, responseStatus, validQuoteText } from './contracts.ts';
 
 test('accepts one positive safe build ID only', () => {
   assert.equal(parseBuildId('42'), 42);
@@ -67,4 +67,38 @@ test('AI explanation requires metadata and structured tool evidence', () => {
     { ...payload.explanation.tool_calls[0], result_sha256: 'not-a-digest' }
   ] } }), null);
   assert.equal(parseExplanation({ explanation: { ...payload.explanation, snapshot_digest: '' } }), null);
+});
+
+test('quote input validates positive ID and UTF-8 byte length', () => {
+  assert.equal(parseSupplierPartId('42'), 42);
+  assert.equal(parseSupplierPartId('0'), null);
+  assert.equal(parseSupplierPartId('42.0'), null);
+  assert.equal(validQuoteText('  '), false);
+  assert.equal(quoteByteLength('报价'), 6);
+  assert.equal(validQuoteText('a'.repeat(MAX_QUOTE_BYTES)), true);
+  assert.equal(validQuoteText('a'.repeat(MAX_QUOTE_BYTES + 1)), false);
+});
+
+test('saved quote requires exact source evidence and actual tool call', () => {
+  const source = '😀 报价 USD 12.50';
+  const start = Array.from(source).indexOf('U');
+  const evidence = { value: 'USD', evidence: 'USD', start, end: start + 3 };
+  const extracted = Object.fromEntries([
+    'supplier_name', 'sku', 'unit_price', 'currency', 'price_unit',
+    'pack_quantity', 'valid_until', 'lead_time'
+  ].map((field) => [field, field === 'currency' ? evidence : null]));
+  const quote = {
+    supplier_part_id: 7, source_sha256: 'a'.repeat(64), source_text: source,
+    created_at: '2026-09-28T00:00:00Z', model: 'deepseek-flash', extracted,
+    checks: [{ field: 'currency', status: 'unverified', message: 'No stored price tier.' }],
+    tool_calls: [{ name: 'read_quote_snapshot', status: 'success', tool_call_id: 'call-7',
+      result_sha256: 'b'.repeat(64) }]
+  };
+  assert.deepEqual(parseQuote({ quote }), quote);
+  assert.equal(parseQuote({ quote: { ...quote, extracted: { ...extracted,
+    currency: { ...evidence, end: start + 4 } } } }), null);
+  assert.equal(parseQuote({ quote: { ...quote, checks: [{ field: 'currency', status: 'approved', message: 'ok' }] } }), null);
+  assert.equal(parseQuote({ quote: { ...quote, tool_calls: [] } }), null);
+  assert.equal(parseQuote({ quote: { ...quote, tool_calls: [{ ...quote.tool_calls[0], name: 'write_purchase_order' }] } }), null);
+  assert.equal(parseQuote({ quote: { ...quote, source_sha256: 'bad' } }), null);
 });
