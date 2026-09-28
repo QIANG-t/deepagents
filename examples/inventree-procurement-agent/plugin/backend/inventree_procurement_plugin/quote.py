@@ -1,5 +1,7 @@
 """Evidence-checked extraction of a pasted quote, without purchase actions."""
 
+from __future__ import annotations
+
 import json
 import os
 import re
@@ -24,6 +26,11 @@ _TIER_QUANTITY = re.compile(
     re.IGNORECASE,
 )
 _MOQ = re.compile(r"\bMOQ\b|\bminimum\s+order(?:\s+quantity)?\b|最低订购量|最小订货量|最低起订量|起订量", re.IGNORECASE)
+_PACK_QUANTITY_LINE = re.compile(
+    r"^\s*(?:pack\s+quantity|包装量|包装数量)\s*[:：=]\s*"
+    r"(?P<quantity>\d+(?:\.\d+)?)\s*$",
+    re.IGNORECASE,
+)
 _UNKNOWN_LEAD_TIMES = frozenset({"tbd", "tba", "to be determined", "待定", "未确定"})
 
 
@@ -33,6 +40,23 @@ class QuoteUnavailable(Exception):
 
 class QuoteFailed(Exception):
     """The provider returned an unverified or malformed extraction."""
+
+    _SAFE_CODES = {
+        "unknown": {"quote_failed"},
+        "input": {"snapshot_too_large"},
+        "provider": {"model_call_failed"},
+        "tool": {"tool_trace_invalid"},
+        "response": {"response_invalid"},
+        "parse": {"invalid_json", "invalid_fields", "field_evidence_missing"},
+        "evidence": {"evidence_metadata_invalid", "evidence_span_ambiguous"},
+        "value": {"numeric_invalid", "numeric_unsupported", "date_invalid",
+                  "value_unsupported"},
+    }
+
+    def __init__(self, message: str, *, stage: str = "unknown", code: str = "quote_failed"):
+        super().__init__(message)
+        self.stage, self.code = ((stage, code) if code in self._SAFE_CODES.get(stage, set())
+                                 else ("unknown", "quote_failed"))
 
 
 def _locate_evidence(source_text: str, evidence: str, start: int, end: int) -> tuple[int, int]:
@@ -47,7 +71,8 @@ def _locate_evidence(source_text: str, evidence: str, start: int, end: int) -> t
         if len(positions) > 1:
             break
     if len(positions) != 1:
-        raise QuoteFailed("Quote evidence did not identify a unique source span")
+        raise QuoteFailed("Quote evidence did not identify a unique source span",
+                          stage="evidence", code="evidence_span_ambiguous")
     position = positions[0]
     return position, position + len(evidence)
 
@@ -81,9 +106,11 @@ def _parse_extraction(text: str, source_text: str) -> dict:
     try:
         candidate = json.loads(text)
     except (TypeError, ValueError) as error:
-        raise QuoteFailed("Quote extraction was not JSON") from error
+        raise QuoteFailed("Quote extraction was not JSON",
+                          stage="parse", code="invalid_json") from error
     if not isinstance(candidate, dict) or set(candidate) != set(FIELDS):
-        raise QuoteFailed("Quote extraction fields were invalid")
+        raise QuoteFailed("Quote extraction fields were invalid",
+                          stage="parse", code="invalid_fields")
     extracted = {}
     for field in FIELDS:
         item = candidate[field]
@@ -91,23 +118,28 @@ def _parse_extraction(text: str, source_text: str) -> dict:
             extracted[field] = None
             continue
         if not isinstance(item, dict) or set(item) != {"value", "evidence", "start", "end"}:
-            raise QuoteFailed("Quote field lacked evidence")
+            raise QuoteFailed("Quote field lacked evidence",
+                              stage="parse", code="field_evidence_missing")
         value, evidence, start, end = (item[key] for key in ("value", "evidence", "start", "end"))
         if (not isinstance(value, str) or not value.strip() or not isinstance(evidence, str) or
                 not evidence or type(start) is not int or type(end) is not int):
-            raise QuoteFailed("Quote evidence fields were invalid")
+            raise QuoteFailed("Quote evidence fields were invalid",
+                              stage="evidence", code="evidence_metadata_invalid")
         start, end = _locate_evidence(source_text, evidence, start, end)
         value = value.strip()
         if field in {"unit_price", "pack_quantity"}:
             try:
                 number = Decimal(value)
             except InvalidOperation as error:
-                raise QuoteFailed("Quote numeric value was invalid") from error
+                raise QuoteFailed("Quote numeric value was invalid",
+                                  stage="value", code="numeric_invalid") from error
             if not number.is_finite() or number <= 0:
-                raise QuoteFailed("Quote numeric value was invalid")
+                raise QuoteFailed("Quote numeric value was invalid",
+                                  stage="value", code="numeric_invalid")
             source_numbers = re.findall(r"(?<!\d)\d+(?:\.\d+)?(?!\d)", evidence)
             if not any(Decimal(token) == number for token in source_numbers):
-                raise QuoteFailed("Quote numeric value lacked source support")
+                raise QuoteFailed("Quote numeric value lacked source support",
+                                  stage="value", code="numeric_unsupported")
             value = format(number, "f")
         if field == "valid_until":
             try:
@@ -115,9 +147,11 @@ def _parse_extraction(text: str, source_text: str) -> dict:
                     raise ValueError("Date must be ISO format")
                 date.fromisoformat(value)
             except ValueError as error:
-                raise QuoteFailed("Quote date was invalid") from error
+                raise QuoteFailed("Quote date was invalid",
+                                  stage="value", code="date_invalid") from error
         if field not in {"unit_price", "pack_quantity"} and value.casefold() not in evidence.casefold():
-            raise QuoteFailed("Quote value lacked source support")
+            raise QuoteFailed("Quote value lacked source support",
+                              stage="value", code="value_unsupported")
         extracted[field] = {"value": value, "evidence": evidence, "start": start, "end": end}
     return _filter_uncertain_fields(extracted, source_text)
 
@@ -134,7 +168,8 @@ def _tool_trace(messages: list, snapshot: str, count: int) -> dict:
             results[0].name != "read_quote_snapshot" or
             results[0].tool_call_id != calls[0]["id"] or
             results[0].status == "error" or results[0].content != snapshot):
-        raise QuoteFailed("Quote tool execution could not be verified")
+        raise QuoteFailed("Quote tool execution could not be verified",
+                          stage="tool", code="tool_trace_invalid")
     return {"name": "read_quote_snapshot", "status": "success",
             "tool_call_id": calls[0]["id"],
             "result_sha256": sha256(snapshot.encode("utf-8")).hexdigest()}
@@ -148,7 +183,8 @@ def extract_quote(source_text: str, supplier_snapshot: dict) -> dict:
     snapshot = json.dumps({"source_text": source_text, "supplier_part": supplier_snapshot},
                           ensure_ascii=False, separators=(",", ":"), sort_keys=True)
     if len(snapshot.encode("utf-8")) > MAX_SNAPSHOT_BYTES:
-        raise QuoteFailed("Quote snapshot exceeds limit")
+        raise QuoteFailed("Quote snapshot exceeds limit",
+                          stage="input", code="snapshot_too_large")
     try:
         from deepagents import (GeneralPurposeSubagentProfile, HarnessProfile,
                                 create_deep_agent, register_harness_profile)
@@ -215,18 +251,41 @@ def extract_quote(source_text: str, supplier_snapshot: dict) -> dict:
     except QuoteUnavailable:
         raise
     except Exception as error:
-        raise QuoteFailed("Quote model failed") from error
+        raise QuoteFailed("Quote model failed", stage="provider",
+                          code="model_call_failed") from error
     messages = result.get("messages", []) if isinstance(result, dict) else []
     trace = _tool_trace(messages, snapshot, count)
     last = messages[-1] if messages else None
     content = getattr(last, "content", None)
     if not isinstance(content, str) or len(content) > 10000:
-        raise QuoteFailed("Quote extraction output was invalid")
+        raise QuoteFailed("Quote extraction output was invalid",
+                          stage="response", code="response_invalid")
     return {"extracted": _parse_extraction(content, source_text),
             "tool_calls": [trace], "model": MODEL}
 
 
-def compare_quote(extracted: dict, supplier_snapshot: dict) -> list[dict]:
+def _explicit_pack_quantity(pack: dict, source_text: str) -> Decimal | None:
+    """Use only an unambiguous, explicitly labelled packaging quantity line."""
+    start = pack["start"]
+    line_start = source_text.rfind("\n", 0, start) + 1
+    line_end = source_text.find("\n", pack["end"])
+    line = source_text[line_start:line_end if line_end >= 0 else len(source_text)]
+    matched = _PACK_QUANTITY_LINE.fullmatch(line)
+    if matched is None or not (line_start <= start < pack["end"] <= line_start + len(line)):
+        return None
+    number_start = line_start + matched.start("quantity")
+    number_end = line_start + matched.end("quantity")
+    if pack["end"] <= number_start or pack["start"] >= number_end:
+        return None
+    try:
+        quoted = Decimal(pack["value"])
+        labelled = Decimal(matched.group("quantity"))
+    except (InvalidOperation, KeyError, TypeError):
+        return None
+    return quoted if quoted.is_finite() and quoted > 0 and quoted == labelled else None
+
+
+def compare_quote(extracted: dict, supplier_snapshot: dict, source_text: str) -> list[dict]:
     """Compare only facts with matching semantics; leave other fields unverified."""
     checks = []
     for field, expected in (("supplier_name", supplier_snapshot["supplier_name"]),
@@ -241,11 +300,12 @@ def compare_quote(extracted: dict, supplier_snapshot: dict) -> list[dict]:
     stored_pack = supplier_snapshot.get("pack_quantity_native")
     pack_status = "unverified"
     if (observed_pack is not None and stored_pack is not None and
-            not supplier_snapshot.get("part_units") and
-            observed_pack["evidence"].strip() == observed_pack["value"]):
+            supplier_snapshot.get("part_units") == ""):
         try:
-            pack_status = ("match" if Decimal(observed_pack["value"]) ==
-                           Decimal(str(stored_pack)) else "conflict")
+            quoted_pack = _explicit_pack_quantity(observed_pack, source_text)
+            if quoted_pack is not None:
+                pack_status = ("match" if quoted_pack == Decimal(str(stored_pack))
+                               else "conflict")
         except InvalidOperation:
             pass
     checks.append({"field": "pack_quantity", "status": pack_status,

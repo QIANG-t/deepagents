@@ -6,9 +6,12 @@ import json
 import unittest
 
 from quote_offline import (
-    FixtureError, _expected_tool_hash, _price_unit_value, grade, load_fixture, run, validate_case,
+    FIXTURE, ROOT, FixtureError, _expected_tool_hash, _price_unit_value, grade,
+    load_fixture, run, validate_case,
 )
 from inventree_procurement_plugin.quote import _parse_extraction
+
+V2_FIXTURE = ROOT / "docs/fixtures/quote_eval_v2.json"
 
 
 def artifact(case):
@@ -36,6 +39,31 @@ class QuoteOfflineTests(unittest.TestCase):
         self.assertEqual(report["pass_count"], 0)
         self.assertEqual(len(report["not_run_case_ids"]), 7)
         self.assertEqual(report["live_model_calls"], 0)
+
+    def test_v2_extends_frozen_v1_without_regrading_old_observations(self):
+        old_cases, old_hash = load_fixture(FIXTURE)
+        cases, new_hash = load_fixture(V2_FIXTURE)
+        self.assertEqual(len(cases), 15)
+        self.assertEqual(cases[:7], old_cases)
+        self.assertNotEqual(new_hash, old_hash)
+        report = run(path=V2_FIXTURE)
+        self.assertEqual(report["case_count"], 15)
+        self.assertEqual(report["pass_count"], 0)
+        self.assertEqual(report["live_model_calls"], 0)
+        self.assertEqual(len(report["not_run_case_ids"]), 15)
+        for case in cases[7:]:
+            with self.subTest(case=case["id"]):
+                self.assertEqual(grade(case, artifact(case))["status"], "pass")
+
+    def test_v2_ambiguous_quote_facts_stay_unknown(self):
+        cases, _ = load_fixture(V2_FIXTURE)
+        tier, moq, unknown = cases[9], cases[10], cases[12]
+        self.assertIsNone(tier["expected"]["extracted"]["unit_price"])
+        self.assertIsNone(tier["expected"]["extracted"]["lead_time"])
+        self.assertEqual(moq["expected"]["extracted"]["pack_quantity"]["value"], "4")
+        self.assertIsNone(unknown["expected"]["extracted"]["lead_time"])
+        self.assertIsNone(unknown["expected"]["extracted"]["valid_until"])
+        self.assertEqual(cases[14]["expected"]["checks"]["pack_quantity"], "match")
 
     def test_judge_accepts_well_formed_synthetic_artifacts(self):
         cases, _ = load_fixture()
@@ -87,6 +115,22 @@ class QuoteOfflineTests(unittest.TestCase):
         self.assertEqual(_price_unit_value("元/件"), "件")
         self.assertNotEqual(_price_unit_value("元/箱"), "件")
         self.assertNotEqual(_price_unit_value("美元/件"), "件")
+        changed["extracted"]["price_unit"]["start"] += 1
+        self.assertIn("source_span_mismatch", grade(case, changed)["failures"])
+
+    def test_v2_chinese_price_unit_yuan_per_pack_equivalence_is_narrow(self):
+        cases, _ = load_fixture(V2_FIXTURE)
+        case = cases[9]
+        changed = artifact(case)
+        changed["extracted"]["price_unit"]["value"] = "元/包"
+        self.assertEqual(grade(case, changed)["status"], "pass")
+        self.assertEqual(_price_unit_value("元/包"), "包")
+        for unsupported in ("人民币/包", "美元/包", "元/箱", "包以上"):
+            self.assertNotEqual(_price_unit_value(unsupported), "包")
+        changed["extracted"]["price_unit"]["value"] = "人民币"
+        self.assertIn("price_unit: expected 包", grade(case, changed)["failures"])
+        changed = artifact(case)
+        changed["extracted"]["price_unit"]["value"] = "元/包"
         changed["extracted"]["price_unit"]["start"] += 1
         self.assertIn("source_span_mismatch", grade(case, changed)["failures"])
 

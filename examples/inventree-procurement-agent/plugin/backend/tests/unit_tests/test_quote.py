@@ -97,6 +97,32 @@ class QuoteTests(unittest.TestCase):
         with self.assertRaises(QuoteFailed):
             _parse_extraction(json.dumps(forged), self.source)
 
+    def test_failure_stage_and_code_are_fixed_without_quote_content(self):
+        with self.assertRaises(QuoteFailed) as malformed:
+            _parse_extraction("not JSON", self.source)
+        self.assertEqual((malformed.exception.stage, malformed.exception.code),
+                         ("parse", "invalid_json"))
+
+        forged = json.loads(json.dumps(self.values))
+        forged["sku"]["evidence"] = "missing-from-source"
+        with self.assertRaises(QuoteFailed) as missing_span:
+            _parse_extraction(json.dumps(forged), self.source)
+        self.assertEqual((missing_span.exception.stage, missing_span.exception.code),
+                         ("evidence", "evidence_span_ambiguous"))
+
+        forged = json.loads(json.dumps(self.values))
+        forged["unit_price"]["value"] = "999"
+        with self.assertRaises(QuoteFailed) as unsupported:
+            _parse_extraction(json.dumps(forged), self.source)
+        self.assertEqual((unsupported.exception.stage, unsupported.exception.code),
+                         ("value", "numeric_unsupported"))
+        for failure in (malformed.exception, missing_span.exception, unsupported.exception):
+            self.assertNotIn("星辰", failure.stage + failure.code)
+            self.assertNotIn("test-key", failure.stage + failure.code)
+        unknown = QuoteFailed("provider said something sensitive", stage="provider said secret",
+                              code="secret value")
+        self.assertEqual((unknown.stage, unknown.code), ("unknown", "quote_failed"))
+
     def test_missing_fields_must_be_null_and_no_extra_keys(self):
         bad = dict(self.values)
         bad["lead_time"] = {"value": "7 days"}
@@ -110,10 +136,34 @@ class QuoteTests(unittest.TestCase):
     def test_supplier_match_conflict_and_unverified_pricing(self):
         snapshot = {"supplier_name": "星辰", "sku": "OTHER",
                     "pack_quantity_native": "10", "part_units": ""}
-        checks = {item["field"]: item["status"] for item in compare_quote(self.values, snapshot)}
+        checks = {item["field"]: item["status"] for item in compare_quote(self.values, snapshot, self.source)}
         self.assertEqual(checks["supplier_name"], "match")
         self.assertEqual(checks["sku"], "conflict")
         self.assertEqual(checks["unit_price"], "unverified")
+
+    def test_only_explicit_pack_quantity_line_can_match_native_quantity(self):
+        snapshot = {"supplier_name": "Example", "sku": "EX-1",
+                    "pack_quantity_native": "8", "part_units": ""}
+
+        def status(source, value, evidence, supplier=snapshot):
+            extracted = {key: None for key in FIELDS}
+            extracted["pack_quantity"] = field(source, value, evidence)
+            return {row["field"]: row["status"] for row in
+                    compare_quote(extracted, supplier, source)}["pack_quantity"]
+
+        self.assertEqual(status("Pack quantity: 8", "8", "8"), "match")
+        self.assertEqual(status("Pack quantity: 8 pcs", "8", "8 pcs"), "unverified")
+        self.assertEqual(status("包装量：8 件", "8", "包装量：8 件"), "unverified")
+        self.assertEqual(status("Pack quantity: 8", "8", "8",
+                                {**snapshot, "pack_quantity_native": "10"}), "conflict")
+        self.assertEqual(status("Pack quantity: 8", "8", "8",
+                                {**snapshot, "part_units": "m"}), "unverified")
+        self.assertEqual(status("Pack quantity: 8", "8", "8",
+                                {**snapshot, "pack_quantity_native": None}), "unverified")
+        self.assertEqual(status("MOQ: 8", "8", "8"), "unverified")
+        self.assertEqual(status("Unit price: USD 8.00 per pack", "8", "8.00"), "unverified")
+        self.assertEqual(status("Pack quantity: 8 or 10", "8", "8"), "unverified")
+        self.assertEqual(status("Pack quantity: 8\nSKU: 8", "8", "SKU: 8"), "unverified")
 
     def test_q01_single_english_price_and_pack_remain_cited(self):
         source = ("Supplier: Northstar Components\nSKU: NS-220\n"
@@ -244,8 +294,10 @@ class QuoteTests(unittest.TestCase):
 
     def test_claim_without_actual_tool_execution_is_rejected(self):
         with patch.dict(sys.modules, self._modules(False)), patch.dict(os.environ, {"DEEPSEEK_API_KEY": "test-key"}):
-            with self.assertRaises(QuoteFailed):
+            with self.assertRaises(QuoteFailed) as rejected:
                 extract_quote(self.source, {"supplier_name": "星辰", "sku": "X-2"})
+        self.assertEqual((rejected.exception.stage, rejected.exception.code),
+                         ("tool", "tool_trace_invalid"))
 
     def test_missing_key_rejects_before_model_call(self):
         with patch.dict(os.environ, {"DEEPSEEK_API_KEY": ""}):

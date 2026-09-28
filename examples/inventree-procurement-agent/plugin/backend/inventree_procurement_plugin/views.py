@@ -321,7 +321,7 @@ def _create_task_quote(request: HttpRequest, task_id: str) -> JsonResponse:
     quote = {"supplier_part_id": supplier_part_id, "source_sha256": source_hash,
              "source_text": source_text, "created_at": timezone.now().isoformat(),
              "extracted": extraction["extracted"],
-             "checks": compare_quote(extraction["extracted"], supplier_snapshot),
+             "checks": compare_quote(extraction["extracted"], supplier_snapshot, source_text),
              "tool_calls": extraction["tool_calls"], "model": extraction["model"]}
     with transaction.atomic():
         task = ProcurementTask.objects.select_for_update().get(pk=task_id, owner_id=request.user.pk)

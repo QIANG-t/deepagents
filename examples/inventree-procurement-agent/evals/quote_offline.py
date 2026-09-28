@@ -48,10 +48,10 @@ def _exact_source_spans(extracted: object, source: str) -> bool:
 
 
 def _price_unit_value(value: str) -> str:
-    """Apply two narrow, source-backed price-unit equivalences."""
+    """Apply only the enumerated, source-backed price-unit equivalences."""
     normalized = value.strip().casefold()
     normalized = re.sub(r"^per\s+", "", normalized).strip()
-    return "件" if normalized == "元/件" else normalized
+    return {"元/件": "件", "元/包": "包"}.get(normalized, normalized)
 
 
 def _same_field_value(field: str, observed: str, expected: str) -> bool:
@@ -95,7 +95,7 @@ def validate_case(case: dict[str, Any]) -> None:
     try:
         extracted = _parse_extraction(json.dumps(expected["extracted"], ensure_ascii=False), source)
         declared = expected["checks"]
-        actual = _statuses(compare_quote(extracted, snapshot))
+        actual = _statuses(compare_quote(extracted, snapshot, source))
     except (KeyError, QuoteFailed) as error:
         raise FixtureError(f"{case.get('id')}: invalid extraction oracle") from error
     if not isinstance(declared, dict) or set(declared) != set(CHECK_FIELDS) or declared != actual:
@@ -204,6 +204,8 @@ def run(observations: list[dict[str, Any]] | None = None, path: Path = FIXTURE) 
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--fixture", type=Path, default=FIXTURE,
+                        help="Synthetic case file (defaults to frozen v1)")
     parser.add_argument("--observations", type=Path, help="Submitted quote API artifacts")
     parser.add_argument("--output", type=Path, help="Write report to this JSON file")
     args = parser.parse_args(argv)
@@ -213,7 +215,7 @@ def main(argv: list[str] | None = None) -> int:
             observations = json.loads(args.observations.read_text(encoding="utf-8"))
             if not isinstance(observations, list):
                 raise ValueError("Observations must be a JSON array")
-        report = run(observations)
+        report = run(observations, path=args.fixture)
     except (OSError, ValueError, KeyError, json.JSONDecodeError) as error:
         print(f"Quote evaluation input error: {error}", file=sys.stderr)
         return 2
