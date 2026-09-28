@@ -12,7 +12,7 @@ With plugin support and the URL mixin enabled, `SLUG = "inventree_procurement"` 
 | `GET tasks/` | Up to 100 of the current user's task metadata, newest first | Authenticated owner only. |
 | `GET tasks/<uuid>/` | One owned task's metadata | Authenticated owner; another user's ID returns 404. |
 
-The routes all include a trailing slash. There is no task creation, approval, or purchase write route. Task metadata contains the task UUID, status, build IDs, and timestamps; it does not return plan contents or credentials. `ProcurementTask.check_user_permission` denies generic model access, while these views explicitly filter by owner. API authentication and real role behavior still require running-instance tests.
+The routes all include a trailing slash. There is no task creation, approval, or purchase write route. Task metadata contains the task UUID, status, build IDs, and timestamps; it does not return plan contents or credentials. `ProcurementTask.check_user_permission` denies generic model access, while these views explicitly filter by owner. Login and owner filtering were verified in the isolated instance; purchase-role permissions have not been tested and are not enforced by these read-only views.
 
 The optional panel uses `UserInterfaceMixin.get_ui_panels`. It is offered only to authenticated users on the InvenTree purchasing index (`target_model = "purchasing"`) and only when the bundled JavaScript file exists. Its source is `procurement-panel.js:RenderProcurementPanel`. The panel calls the read-only health and task endpoints and contains no purchase action. The plugin must have InvenTree's interface plugin setting enabled for the panel to appear.
 

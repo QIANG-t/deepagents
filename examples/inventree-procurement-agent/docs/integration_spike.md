@@ -27,7 +27,7 @@
 4. 插件源码以只读方式挂载，直接从该路径执行 `pip install` 时，setuptools 无法写入 egg-info。复制到专用数据卷后安装成功。
 5. 手工创建的测试用户没有自动生成 `UserProfile`，浏览器登录触发 `User.profile.RelatedObjectDoesNotExist`。为两个测试用户补建 profile 后，登录与面板渲染成功。
 
-## 可复现命令
+## 启动与插件安装命令
 
 在 `inventree/` 目录执行。以下临时覆盖文件只写到 `/tmp`；与默认 Compose 的源码挂载不同，它直接运行本地检出源码构建出的镜像。`!override` 需要本次核查使用的 Compose 版本支持。
 
@@ -81,7 +81,7 @@ docker compose --project-name inventree-spike --project-directory . \
 docker compose --project-name inventree-spike --project-directory . \
   -f contrib/container/dev-docker-compose.yml -f /tmp/inventree-spike.override.yml \
   run --rm --no-deps inventree-dev-server sh -c \
-  'cp -a /opt/inventree-procurement-plugin /home/inventree/data/plugin-src && python -m pip install --no-deps /home/inventree/data/plugin-src'
+  'mkdir -p /home/inventree/data/plugin-src && cp -a /opt/inventree-procurement-plugin/. /home/inventree/data/plugin-src/ && python -m pip install --no-deps /home/inventree/data/plugin-src'
 docker compose --project-name inventree-spike --project-directory . \
   -f contrib/container/dev-docker-compose.yml -f /tmp/inventree-spike.override.yml \
   run --rm --no-deps inventree-dev-server python src/backend/InvenTree/manage.py shell -c \
@@ -105,7 +105,7 @@ docker compose --project-name inventree-spike --project-directory . \
   down
 ```
 
-本次匿名响应分别为 `200` 和 `401`。`down` 不带 `-v`，因此两个专用卷仍在。若需要排查启动，执行同一 Compose 前缀的 `ps` 与 `logs --tail 100 inventree-dev-server`；不要把旧日志中的迁移前报错当作当前启动状态。插件包是安装时复制到数据卷的快照：修改工作区源码后须重新复制、安装、收集静态文件并重启 Web 容器。
+本次匿名响应分别为 `200` 和 `401`。`down` 不带 `-v`，因此两个专用卷仍在。若需要排查启动，执行同一 Compose 前缀的 `ps` 与 `logs --tail 100 inventree-dev-server`；不要把旧日志中的迁移前报错当作当前启动状态。插件包是安装时复制到数据卷的快照：修改工作区源码后须重新复制、安装、收集静态文件并重启 Web 容器。上述命令不创建测试用户或任务；浏览器验证需要另备隔离测试用户及其 `UserProfile`。
 
 ## 已验证边界与下一步
 
