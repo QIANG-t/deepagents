@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "inventree-procurement-agent-plugin"
 version = "0.1.0"
-description = "Read-only InvenTree procurement task integration spike"
+description = "InvenTree procurement task and read-only preview integration spike"
 requires-python = ">=3.11"
 dependencies = []
 

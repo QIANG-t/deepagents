@@ -1,4 +1,4 @@
-"""Durable task metadata; no approval or purchase execution is stored here yet."""
+"""Durable analysis task; no approval or purchase execution is stored here."""
 
 import uuid
 
@@ -7,7 +7,7 @@ from django.db import models
 
 
 class ProcurementTask(models.Model):
-    """A task owned by one user; created only through trusted server-side code."""
+    """A task owned by one user with a persisted factual preview."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="procurement_agent_tasks")
@@ -15,6 +15,8 @@ class ProcurementTask(models.Model):
     build_ids = models.JSONField(default=list)
     snapshot_digest = models.CharField(max_length=64, blank=True)
     plan_digest = models.CharField(max_length=64, blank=True)
+    preview = models.JSONField(default=dict)
+    analyzed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

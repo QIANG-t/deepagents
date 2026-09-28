@@ -12,7 +12,7 @@ from .access import read_status
 
 
 class InvenTreeProcurementAgent(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTreePlugin):
-    """Read-only procurement plugin; no approval or PO write URLs exist."""
+    """Analysis task plugin; no approval or PO write URLs exist."""
 
     NAME = "InvenTreeProcurementAgent"
     SLUG = "inventree_procurement"
@@ -22,11 +22,12 @@ class InvenTreeProcurementAgent(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTr
     VERSION = "0.1.0"
 
     def setup_urls(self):
-        """Expose authenticated health and task reads under the plugin slug."""
+        """Expose authenticated task creation and factual reads."""
         return [
             path("health/", views.health, name="health"),
             path("tasks/", views.tasks, name="tasks"),
             path("tasks/<uuid:task_id>/", views.task_detail, name="task-detail"),
+            path("tasks/<uuid:task_id>/preview/", views.task_preview, name="task-preview"),
         ]
 
     def get_ui_panels(self, request, context, **kwargs):
