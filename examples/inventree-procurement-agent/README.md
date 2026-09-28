@@ -1,6 +1,10 @@
 # InvenTree procurement agent skeleton
 
-This example is an **offline-verified prototype**. It includes a GET-only InvenTree REST adapter, but it has not been run against an InvenTree service. It does not call a model, persist approval, or create a real purchase order. It separates model decisions from deterministic quantity and approval checks. The implementation is limited to this example directory.
+This example includes an **offline-verified Agent prototype** and a **read-only native InvenTree plugin**. The plugin was installed in an isolated InvenTree instance: login, owner-only task reads, persistence after restart, and purchasing-page rendering were verified. The GET-only REST adapter for real build and supply data has not been run against that instance. No model call, durable approval, or real purchase order write has been completed. The implementation is limited to this example directory.
+
+## Native plugin milestone
+
+The user chose an InvenTree plugin as the first integration path. `plugin/backend/` contains the installable Python package, task model, and authenticated read-only endpoints. `plugin/frontend/` contains the purchasing-page panel. [The integration record](docs/integration_spike.md) gives the isolated Docker setup and observed responses; [the decision record](docs/architecture_decisions.zh-CN.md) explains the tradeoffs; [the interview notes](docs/interview_notes.zh-CN.md) separate verified work from proposed capabilities. The panel currently shows task metadata and explicitly marks build, stock, supplier part, and quote data as unconnected.
 
 ## Flow
 
