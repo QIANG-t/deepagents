@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "synthetic": true,
+  "cases": [
+    {
+      "id": "R01",
+      "description": "同一 Part 有两条需求行；共享库存 5 只能扣减一次。",
+      "build": {"id": "101", "reference": "BO-R01", "part_id": "901", "status": 10, "take_from_id": "41"},
+      "parts": [
+        {
+          "id": "201", "name": "Synthetic resistor", "ipn": "SYN-R-201", "units": "pcs", "purchaseable": true,
+          "lines": [
+            {"id": "1001", "required": "4", "consumed": "0", "allocated": "0", "available_stock": "5"},
+            {"id": "1002", "required": "6", "consumed": "0", "allocated": "0", "available_stock": "5"}
+          ]
+        }
+      ],
+      "expected": {
+        "outstanding_by_line": {"1001": "4", "1002": "6"},
+        "parts": {"201": {"total": "10", "stock": "5", "shortage": "5"}},
+        "required_warnings": ["Preliminary shortage excludes incoming supply"]
+      }
+    },
+    {
+      "id": "R02",
+      "description": "单行需求 3、可用库存 8；初步缺口应为 0，不能得到负数。",
+      "build": {"id": "102", "reference": "BO-R02", "part_id": "902", "status": 10, "take_from_id": "42"},
+      "parts": [
+        {
+          "id": "202", "name": "Synthetic washer", "ipn": "SYN-W-202", "units": "pcs", "purchaseable": true,
+          "lines": [
+            {"id": "1003", "required": "3", "consumed": "0", "allocated": "0", "available_stock": "8"}
+          ]
+        }
+      ],
+      "expected": {
+        "outstanding_by_line": {"1003": "3"},
+        "parts": {"202": {"total": "3", "stock": "8", "shortage": "0"}},
+        "required_warnings": ["Preliminary shortage excludes incoming supply"]
+      }
+    },
+    {
+      "id": "R03",
+      "description": "已消耗和已分配数量均应从需求扣除；10－2－3＝5。",
+      "build": {"id": "103", "reference": "BO-R03", "part_id": "903", "status": 10, "take_from_id": "43"},
+      "parts": [
+        {
+          "id": "203", "name": "Synthetic bearing", "ipn": "SYN-B-203", "units": "pcs", "purchaseable": true,
+          "lines": [
+            {"id": "1004", "required": "10", "consumed": "2", "allocated": "3", "available_stock": "1"}
+          ]
+        }
+      ],
+      "expected": {
+        "outstanding_by_line": {"1004": "5"},
+        "parts": {"203": {"total": "5", "stock": "1", "shortage": "4"}},
+        "required_warnings": ["Preliminary shortage excludes incoming supply"]
+      }
+    },
+    {
+      "id": "R04",
+      "description": "同一 Build 的两个 Part 分别汇总，不应跨 Part 共用库存。",
+      "build": {"id": "104", "reference": "BO-R04", "part_id": "904", "status": 10, "take_from_id": "44"},
+      "parts": [
+        {
+          "id": "204", "name": "Synthetic bolt", "ipn": "SYN-B-204", "units": "pcs", "purchaseable": true,
+          "lines": [
+            {"id": "1005", "required": "4", "consumed": "0", "allocated": "0", "available_stock": "1"}
+          ]
+        },
+        {
+          "id": "205", "name": "Synthetic nut", "ipn": "SYN-N-205", "units": "pcs", "purchaseable": true,
+          "lines": [
+            {"id": "1006", "required": "3", "consumed": "0", "allocated": "0", "available_stock": "5"}
+          ]
+        }
+      ],
+      "expected": {
+        "outstanding_by_line": {"1005": "4", "1006": "3"},
+        "parts": {
+          "204": {"total": "4", "stock": "1", "shortage": "3"},
+          "205": {"total": "3", "stock": "5", "shortage": "0"}
+        },
+        "required_warnings": ["Preliminary shortage excludes incoming supply"]
+      }
+    },
+    {
+      "id": "R05",
+      "description": "同一 Part 的两条库存注释 5 与 7 冲突；不得挑一个值计算缺口。",
+      "build": {"id": "105", "reference": "BO-R05", "part_id": "905", "status": 10, "take_from_id": "45"},
+      "parts": [
+        {
+          "id": "206", "name": "Synthetic capacitor", "ipn": "SYN-C-206", "units": "pcs", "purchaseable": true,
+          "lines": [
+            {"id": "1007", "required": "4", "consumed": "0", "allocated": "0", "available_stock": "5"},
+            {"id": "1008", "required": "6", "consumed": "0", "allocated": "0", "available_stock": "7"}
+          ]
+        }
+      ],
+      "expected": {
+        "outstanding_by_line": {"1007": "4", "1008": "6"},
+        "parts": {"206": {"total": "10", "stock": null, "shortage": null}},
+        "required_warnings": ["stock annotations disagree", "Cannot subtract an unverified scoped stock quantity"]
+      }
+    },
+    {
+      "id": "R06",
+      "description": "Build-context 可用库存注释缺失；需求可算，但库存与缺口保持未核实。",
+      "build": {"id": "106", "reference": "BO-R06", "part_id": "906", "status": 10, "take_from_id": "46"},
+      "parts": [
+        {
+          "id": "207", "name": "Synthetic connector", "ipn": "SYN-C-207", "units": "pcs", "purchaseable": true,
+          "lines": [
+            {"id": "1009", "required": "6", "consumed": "0", "allocated": "0", "available_stock": null}
+          ]
+        }
+      ],
+      "expected": {
+        "outstanding_by_line": {"1009": "6"},
+        "parts": {"207": {"total": "6", "stock": null, "shortage": null}},
+        "required_warnings": ["available_stock annotation is missing or invalid", "Cannot subtract an unverified scoped stock quantity"]
+      }
+    },
+    {
+      "id": "R07",
+      "description": "Build 没有物料需求行；不能凭空生成 Part 或缺口。",
+      "build": {"id": "107", "reference": "BO-R07", "part_id": "907", "status": 10, "take_from_id": "47"},
+      "parts": [],
+      "expected": {
+        "outstanding_by_line": {},
+        "parts": {},
+        "required_warnings": ["Preliminary shortage excludes incoming supply"]
+      }
+    },
+    {
+      "id": "R08",
+      "description": "已消耗加已分配超过需求时，未满足需求归零；无 take_from 时库存范围为所有合格库位。",
+      "build": {"id": "108", "reference": "BO-R08", "part_id": "908", "status": 10, "take_from_id": null},
+      "parts": [
+        {
+          "id": "208", "name": "Synthetic fuse", "ipn": "SYN-F-208", "units": "pcs", "purchaseable": true,
+          "lines": [
+            {"id": "1010", "required": "3", "consumed": "1", "allocated": "3", "available_stock": "0"}
+          ]
+        }
+      ],
+      "expected": {
+        "outstanding_by_line": {"1010": "0"},
+        "parts": {"208": {"total": "0", "stock": "0", "shortage": "0"}},
+        "required_warnings": ["Preliminary shortage excludes incoming supply"]
+      }
+    }
+  ]
+}

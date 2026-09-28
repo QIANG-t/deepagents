@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "provider": "deepseek",
+  "fixture_sha256": "3c2c8316627c86fa3ff2491eaed8f630ea89994893a18d1dfc9248330e86d585",
+  "explanation_source_sha256": "95d117e21d2b2e9bd198aedff92faa77d26e0d266ac2c98c59c73cbf102216e8",
+  "judge_sha256": "190f470d7c91725ceee93d0f195d06f78a1817c73eef7681df37581e03ca1c2f",
+  "case_count": 8,
+  "repeats_per_case": 3,
+  "run_count": 24,
+  "hard_pass_count": 24,
+  "coverage_complete_count": 23,
+  "case_metrics": {
+    "R01": {"trials": 3, "hard_pass": 3, "coverage_complete": 3},
+    "R02": {"trials": 3, "hard_pass": 3, "coverage_complete": 2},
+    "R03": {"trials": 3, "hard_pass": 3, "coverage_complete": 3},
+    "R04": {"trials": 3, "hard_pass": 3, "coverage_complete": 3},
+    "R05": {"trials": 3, "hard_pass": 3, "coverage_complete": 3},
+    "R06": {"trials": 3, "hard_pass": 3, "coverage_complete": 3},
+    "R07": {"trials": 3, "hard_pass": 3, "coverage_complete": 3},
+    "R08": {"trials": 3, "hard_pass": 3, "coverage_complete": 3}
+  },
+  "median_elapsed_seconds": 3.2535,
+  "usage_cost": "unavailable",
+  "semantic_accuracy": "requires_human_review"
+}

@@ -8,6 +8,8 @@ The user chose an InvenTree plugin as the first integration path. `plugin/backen
 
 The optional explanation endpoint uses `ChatDeepSeek` with `create_deep_agent` and a single task-bound snapshot tool. It caches successful explanations by snapshot digest and keeps model text separate from deterministic facts. The [DeepSeek validation record](docs/milestone3_deepseek_integration_validation.md) reports the live checks and remaining gaps. Supplier quotes remain unconnected.
 
+The [read-only evaluation](evals/README.readonly.md) now supplies eight synthetic Build cases, an independent `Decimal` oracle, a deterministic template baseline, and an explicit repeated DeepSeek runner. This evaluates the current preview and explanation feature; the older [18-case plan](docs/evaluation_plan.md) covers future quote, approval, and purchasing work. Free-form answer coverage is flagged for human review rather than counted as proven semantic accuracy.
+
 ## Flow
 
 ```mermaid

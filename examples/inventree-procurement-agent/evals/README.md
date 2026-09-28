@@ -1,5 +1,7 @@
 # Offline procurement eval, first slice
 
+For the implemented single-Build read-only plugin and DeepSeek explanation, use the separate [read-only explanation evaluation](README.readonly.md). The 18 cases below target the future quote, approval, and purchase-write workflow; they are not scores for the current plugin.
+
 `offline.py` validates the 18-case synthetic fixture and grades **submitted observation artifacts for C01–C06 only**. It makes no InvenTree, browser, or model calls. C07–C18 are listed as `unsupported`; C01–C06 without submitted observations are `not_run`, never `pass`. A `pass` means the submitted JSON matches the fixture oracle and claimed readback shape. It does not authenticate the artifact or prove a real purchase order was created.
 
 From this directory:
