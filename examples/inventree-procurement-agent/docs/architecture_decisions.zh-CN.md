@@ -8,7 +8,7 @@
 
 **选择。** 先做一个只读插件：面板、登录后可访问的接口、可恢复的任务记录。通过运行验证后，再把本目录的 Deep Agents 工作流接入插件。若实测发现模型依赖、执行时间或资源占用不适合 InvenTree 进程，则将模型运行拆成独立服务；插件继续承担用户身份、权限和审批入口。
 
-**取舍。** 原生插件使真实业务演示和权限归属更清楚，但 InvenTree 开发镜像、前端构建及插件安装的准备成本更高。独立服务较易启动模型，但必须额外解决登录态、接口授权与系统内入口。[第一阶段集成核查](integration_spike.md)证明插件安装和基本任务接口；[第二阶段联调](milestone2_integration_validation.md)证明真实 Build 数据读取、任务创建、权限拒绝、重启恢复和浏览器预览。模型仍待接入。
+**取舍。** 原生插件使真实业务演示和权限归属更清楚，但 InvenTree 开发镜像、前端构建及插件安装的准备成本更高。独立服务较易启动模型，但必须额外解决登录态、接口授权与系统内入口。[第一阶段集成核查](integration_spike.md)证明插件安装和基本任务接口；[第二阶段联调](milestone2_integration_validation.md)证明真实 Build 数据读取、任务创建、权限拒绝、重启恢复和浏览器预览；[第三阶段联调](milestone3_deepseek_integration_validation.md)证明 DeepSeek 只读解释的真实调用与浏览器操作。
 
 **通过条件。** 在隔离 InvenTree 实例里，登录用户能看到只读面板和任务；未登录用户被拒绝；无采购权限用户不能访问审批或写入动作；重启后任务仍在。保留实际请求、响应、日志和运行命令。没有这些证据时，插件仍是候选实现。
 
@@ -43,3 +43,13 @@
 **权限边界。** API 用 InvenTree 的 `check_user_permission` 检查 Build、BuildLine、Part、StockItem 的查看权限，读取任务时再次检查，并按 owner 过滤。采购页面自身另外要求 `purchase_order.view`；隔离非超级用户同时拥有 `build.view` 和 `purchase_order.view` 即可在页面操作，且没有 `PurchaseOrder.add` 权限。[联调记录](milestone2_integration_validation.md)有 HTTP 与浏览器证据。
 
 **面试讲法。** “我用宿主 Build 上下文取库存，先按 Part 汇总需求再扣一次共享库存。测试生产单两行需求 4 和 6、源库位库存 5，页面得到初步缺口 5；若把两行的库存相加会算错。我还分别验证了插件 API 权限和宿主采购页面权限。”
+
+## ADR-6：先用 DeepSeek 解释已核实快照
+
+**背景。** 第二阶段已有持久任务、来源和确定性数字，适合验证一次真正的模型工具调用。现有 `agent.py` 是离线采购规划原型，包含草稿创建工具，不适合直接接到当前只读页面。
+
+**选择。** 插件的可选 `ai` 依赖使用 `langchain-deepseek` 的 `ChatDeepSeek`，通过本仓库的 `create_deep_agent` 调用 `deepseek-flash`。这是当前 DeepSeek 官方列出的工具调用模型；Flash 价格低于 Pro，先用它验证正确性与成本。模型只获得当前任务绑定的 `read_task_snapshot` 工具；服务端仍控制登录、归属、业务查看权限、CSRF、快照摘要和结果缓存。Deep Agents 默认工具由模型可见清单过滤，并由独立的执行层白名单阻止其他工具实际运行。数量和缺口继续由 `facts.py` 计算，模型文字单独标成解释。[DeepSeek 官方模型说明](https://api-docs.deepseek.com/quick_start/pricing/)和[LangChain 的 ChatDeepSeek 文档](https://reference.langchain.com/python/langchain-deepseek/chat_models/ChatDeepSeek)是本次接口选择依据。
+
+**取舍与验收。** 原生插件中的同步模型请求便于复用身份和任务归属，但会占用 Web 请求。当前限定每次提供商请求 15 秒、无自动重试、输出最多 600 token，并按任务快照缓存成功结果。离线模拟、真实 DeepSeek HTTP 调用和浏览器解释流程已经通过[第三阶段联调](milestone3_deepseek_integration_validation.md)；两次记录的 HTTP 生成耗时约 6.31 秒与 4.27 秒。并发与更多生产单尚未做真实服务压力验证。若实际耗时或错误率不合适，再把模型执行移到独立 worker，插件保留授权与展示入口。
+
+**面试讲法。** “我先把可信库存快照交给一个只读工具，让模型解释来源和限制；模型没有采购写入工具。真实 DeepSeek 调用和浏览器操作已在隔离实例跑通，日志保留工具调用 ID 与结果哈希；只有校验通过的解释才会缓存。我还没有验证生产负载，也没有开放采购写入。”

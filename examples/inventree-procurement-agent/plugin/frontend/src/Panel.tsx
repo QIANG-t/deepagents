@@ -3,6 +3,7 @@ import { Alert, Badge, Button, Group, Loader, Paper, Stack, Text, TextInput, Tit
 import * as React from 'react';
 import { displayFact, parseBuildId, parseCreatedTask, parsePreview, parseTasks, requestError } from './contracts';
 import type { Preview, PreviewLine, PreviewPart, Task } from './contracts';
+import { ExplanationPanel } from './ExplanationPanel';
 
 const BASE_URL = '/plugin/inventree_procurement/';
 type LoadState = 'idle' | 'checking' | 'available' | 'unavailable';
@@ -256,6 +257,9 @@ function ProcurementPanel({ context }: { context: InvenTreePluginContext }) {
           {previewState === 'checking' && <Loader size="sm" aria-label="加载预览" />}
           {previewState === 'unavailable' && <Alert color="yellow">{previewError}</Alert>}
           {previewState === 'available' && preview && <PreviewContent preview={preview} />}
+          {previewState === 'available' && preview && selectedTask &&
+            <ExplanationPanel key={selectedTask} context={context} taskId={selectedTask}
+              snapshotDigest={preview.snapshot_digest} />}
         </Stack>
 
         <Text size="xs" c="dimmed">

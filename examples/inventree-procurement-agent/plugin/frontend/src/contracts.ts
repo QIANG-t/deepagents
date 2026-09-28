@@ -51,6 +51,14 @@ export type Preview = {
   warnings: string[];
 };
 
+export type Explanation = {
+  text: string;
+  model: string;
+  snapshot_digest: string;
+  generated_at: string;
+  tool_calls: { name: string; status: string; tool_call_id: string; result_sha256: string }[];
+};
+
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -174,9 +182,44 @@ export function displayFact(value: Fact): string {
   return value === null ? '待核实' : value;
 }
 
+export function parseExplanation(value: unknown): Explanation | null {
+  const explanation = record(record(value)?.explanation);
+  if (!explanation || typeof explanation.text !== 'string' || !explanation.text.trim() ||
+      typeof explanation.model !== 'string' || !explanation.model.trim() ||
+      typeof explanation.snapshot_digest !== 'string' || !explanation.snapshot_digest ||
+      typeof explanation.generated_at !== 'string' || !explanation.generated_at ||
+      !Array.isArray(explanation.tool_calls) || explanation.tool_calls.length !== 1) return null;
+  const toolCalls = explanation.tool_calls.map(record);
+  if (toolCalls.some((call) => !call || call.name !== 'read_task_snapshot' ||
+      call.status !== 'success' || typeof call.tool_call_id !== 'string' ||
+      !call.tool_call_id.trim() || typeof call.result_sha256 !== 'string' ||
+      !/^[a-f0-9]{64}$/.test(call.result_sha256))) return null;
+  return {
+    text: explanation.text, model: explanation.model,
+    snapshot_digest: explanation.snapshot_digest, generated_at: explanation.generated_at,
+    tool_calls: toolCalls.map((call) => ({
+      name: call!.name as string, status: call!.status as string,
+      tool_call_id: call!.tool_call_id as string, result_sha256: call!.result_sha256 as string
+    }))
+  };
+}
+
+export function isCurrentExplanation(explanation: Explanation, snapshotDigest: string): boolean {
+  return explanation.snapshot_digest === snapshotDigest;
+}
+
+export function responseStatus(error: unknown): number | null {
+  const status = record(record(error)?.response)?.status;
+  return typeof status === 'number' ? status : null;
+}
+
+export function responseCode(error: unknown): string | null {
+  const code = record(record(record(error)?.response)?.data)?.code;
+  return typeof code === 'string' ? code : null;
+}
+
 export function requestError(error: unknown): string {
-  const response = record(record(error)?.response);
-  const status = response?.status;
+  const status = responseStatus(error);
   if (status === 400) return '请求格式有误，请检查生产单 ID。';
   if (status === 401) return '登录已失效，请重新登录后重试。';
   if (status === 403) return '没有读取生产单、物料或库存所需的权限。';

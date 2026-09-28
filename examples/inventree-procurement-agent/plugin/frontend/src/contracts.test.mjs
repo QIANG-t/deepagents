@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { displayFact, parseBuildId, parseCreatedTask, parsePreview, requestError } from './contracts.ts';
+import { displayFact, isCurrentExplanation, parseBuildId, parseCreatedTask, parseExplanation, parsePreview, requestError, responseCode, responseStatus } from './contracts.ts';
 
 test('accepts one positive safe build ID only', () => {
   assert.equal(parseBuildId('42'), 42);
@@ -43,4 +43,28 @@ test('reports common authentication and missing-resource failures', () => {
   assert.match(requestError({ response: { status: 403 } }), /权限/);
   assert.match(requestError({ response: { status: 404 } }), /不存在/);
   assert.match(requestError({ response: { status: 409 } }), /尚未生成/);
+  assert.equal(responseStatus({ response: { status: 409 } }), 409);
+  assert.equal(responseCode({ response: { data: { code: 'explanation_unavailable' } } }), 'explanation_unavailable');
+  assert.equal(responseStatus({}), null);
+});
+
+test('AI explanation requires metadata and structured tool evidence', () => {
+  const payload = { explanation: {
+    text: 'Only the observed demand is known.', model: 'returned-model',
+    snapshot_digest: 'sha256', generated_at: '2026-09-28T00:00:00Z',
+    tool_calls: [{ name: 'read_task_snapshot', status: 'success', tool_call_id: 'call-1',
+      result_sha256: 'a'.repeat(64) }]
+  } };
+  assert.deepEqual(parseExplanation(payload), payload.explanation);
+  assert.equal(isCurrentExplanation(payload.explanation, 'sha256'), true);
+  assert.equal(isCurrentExplanation(payload.explanation, 'other'), false);
+  assert.equal(parseExplanation({ explanation: { ...payload.explanation, tool_calls: [] } }), null);
+  assert.equal(parseExplanation({ explanation: { ...payload.explanation, tool_calls: [{ name: 'read_task_snapshot', status: 'error' }] } }), null);
+  assert.equal(parseExplanation({ explanation: { ...payload.explanation, tool_calls: [
+    { ...payload.explanation.tool_calls[0], tool_call_id: '' }
+  ] } }), null);
+  assert.equal(parseExplanation({ explanation: { ...payload.explanation, tool_calls: [
+    { ...payload.explanation.tool_calls[0], result_sha256: 'not-a-digest' }
+  ] } }), null);
+  assert.equal(parseExplanation({ explanation: { ...payload.explanation, snapshot_digest: '' } }), null);
 });

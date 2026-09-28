@@ -2,9 +2,9 @@
 
 ## 一分钟说明
 
-“我以 InvenTree 的生产单采购为场景，正在做一个可审计的采购 Agent。当前完成了原生插件的真实数据只读预览：用户在采购页输入一张生产单 ID，系统保存分析任务，展示物料需求、限定库位库存、来源和初步缺口。测试单有两条同物料需求 4 和 6，可用库存 5 只计一次，初步缺口为 5。我验证了普通只读角色、CSRF、任务归属和重启恢复。Deep Agents 的工作流原型已有离线测试，但真实模型调用、报价理解、审批和采购单写入仍是下一阶段。”
+“我以 InvenTree 的生产单采购为场景，做了一个可审计的采购分析 Agent。原生插件在隔离实例跑通真实数据只读预览：测试单两条同物料需求 4 和 6，可用库存 5 只计一次，初步缺口为 5。我验证了普通只读角色、CSRF、任务归属和重启恢复。DeepSeek 只能通过当前任务绑定的只读工具读取事实快照；真实 API 调用和浏览器生成均已跑通，并保存工具调用 ID 与结果哈希。报价理解、审批和采购单写入仍待实现。”
 
-说完后按实际情况展示：[设计决策](architecture_decisions.zh-CN.md)、[第二阶段联调](milestone2_integration_validation.md)、[测试案例](evaluation_plan.md)。演示前先核对这些文件中的最新结果。
+说完后按实际情况展示：[设计决策](architecture_decisions.zh-CN.md)、[第二阶段联调](milestone2_integration_validation.md)、[第三阶段联调](milestone3_deepseek_integration_validation.md)、[测试案例](evaluation_plan.md)。演示前先核对这些文件中的最新结果。
 
 ## 架构图
 
@@ -13,8 +13,8 @@ flowchart LR
     A[InvenTree 采购页] --> B[插件只读面板]
     B --> C[插件任务接口与持久快照]
     C --> G[Build 与 BuildLine 只读查询]
-    C -. 待接入 .-> D[Deep Agents 工作流]
-    D --> E[来源校验与确定性采购规划]
+    C --> D[DeepSeek + Deep Agents 只读解释]
+    C -. 待接入 .-> E[报价与确定性采购规划]
     E -. 待验证 .-> F[人工审批与待处理草稿]
 ```
 
@@ -31,4 +31,4 @@ flowchart LR
 
 ## 如实说明边界
 
-第二阶段插件已显示一张真实测试生产单的需求行、按 Part 去重的库存、初步缺口、来源和警示。供应商报价、真实模型调用、审批和采购单写入尚未形成端到端流程。面试时把“只读数据与权限已验证”和“Agent 采购能力待接入”分别说明；具体完成程度以[第二阶段联调](milestone2_integration_validation.md)为准。
+第二阶段插件已显示一张真实测试生产单的需求行、按 Part 去重的库存、初步缺口、来源和警示。第三阶段真实 DeepSeek 调用、工具执行证据、HTTP 权限与缓存、浏览器生成和重启读取已在隔离实例验证；供应商报价、审批和采购单写入未接入。单例正确不代表模型对所有生产单都准确，也没有测量与现有采购向导的对比成绩。具体证据见[第二阶段联调](milestone2_integration_validation.md)、[第三阶段联调](milestone3_deepseek_integration_validation.md)和[后续验收清单](milestone3_deepseek_validation_plan.zh-CN.md)。

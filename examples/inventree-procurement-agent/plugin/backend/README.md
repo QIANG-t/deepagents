@@ -13,6 +13,12 @@ With plugin support and the URL mixin enabled, `SLUG = "inventree_procurement"` 
 | `POST tasks/` | Creates one durable analysis task and returns 201 | Same view permissions; JSON body `{"build_ids":[<one positive integer>]}`. |
 | `GET tasks/<uuid>/` | One owned task's metadata | Authenticated owner with current business view permissions; another user's ID returns 404. |
 | `GET tasks/<uuid>/preview/` | The stored factual snapshot | Authenticated owner with current business view permissions; another user's ID returns 404. |
+| `GET tasks/<uuid>/explanation/` | Cached AI explanation, or 409 before generation | Same owner and current business view permissions. |
+| `POST tasks/<uuid>/explanation/` | Generate and cache one explanation per snapshot digest | Same permissions and CSRF token; empty body. |
+
+The explanation response is `{"explanation":{"text":"...","model":"deepseek-flash","snapshot_digest":"...","generated_at":"...","tool_calls":[{"name":"read_task_snapshot","status":"success","tool_call_id":"...","result_sha256":"..."}]}}`. POST returns the cached success for an unchanged digest; a concurrent generation returns 409. A different digest makes any previous explanation unavailable until POST generates a new one. The endpoint calls Deep Agents `create_deep_agent` with one read-only tool that returns the owned task's persisted preview. It verifies that the tool actually ran before caching model text. Filesystem, shell, todo, and subagent tools are excluded; no procurement write tools are present. Model output is explanatory and does not authorize purchases.
+
+Install the optional `ai` extra (`python -m pip install -e '.[ai]'`) and set `DEEPSEEK_API_KEY` in the InvenTree server environment to enable POST generation. The configured provider is DeepSeek's OpenAI-compatible Chat Completions endpoint at `https://api.deepseek.com`, model `deepseek-flash`, with thinking disabled. Missing key or optional packages return 503, and provider or invalid-output failures return 502 without exposing provider errors. Each request has one snapshot read, a 32 KiB snapshot limit, a 600 output-token cap, no provider retries, and a 15-second timeout per provider call. A database claim prevents overlapping generation for a task and expires after 60 seconds if a worker exits. Real API, HTTP, browser, and restart observations are recorded in the [milestone 3 validation](../../docs/milestone3_deepseek_integration_validation.md); concurrency and injected provider failures remain offline-test evidence.
 
 `health.writes_enabled = false` refers to procurement approval and order writes; creating an analysis task is enabled.
 
@@ -28,7 +34,7 @@ The optional panel uses `UserInterfaceMixin.get_ui_panels`. It is offered only t
 
 ## Package and asset layout
 
-The Python package exposes the `inventree_plugins` entry point in `pyproject.toml`. Its Django app name is `inventree_procurement_plugin`. Migration `0001_initial` creates a UUID task table; `0002_task_preview` adds the durable preview and analysis timestamp. Existing shell-seeded tasks remain readable and return 409 for preview until analyzed through a new task.
+The Python package exposes the `inventree_plugins` entry point in `pyproject.toml`. Its Django app name is `inventree_procurement_plugin`. Migration `0001_initial` creates a UUID task table; `0002_task_preview` adds the durable preview and analysis timestamp; `0003_task_explanation` adds the explanation cache and generation claim. Existing shell-seeded tasks remain readable and return 409 for preview until analyzed through a new task.
 
 Build the frontend from `../frontend/`, then copy only its output into this package before building/installing the backend:
 

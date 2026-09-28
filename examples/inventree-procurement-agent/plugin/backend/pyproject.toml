@@ -9,6 +9,9 @@ description = "InvenTree procurement task and read-only preview integration spik
 requires-python = ">=3.11"
 dependencies = []
 
+[project.optional-dependencies]
+ai = ["deepagents>=0.7.19,<0.8", "langchain-deepseek>=1.1,<2"]
+
 [project.entry-points.inventree_plugins]
 InvenTreeProcurementAgent = "inventree_procurement_plugin.plugin:InvenTreeProcurementAgent"
 

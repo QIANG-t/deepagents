@@ -28,6 +28,7 @@ class InvenTreeProcurementAgent(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTr
             path("tasks/", views.tasks, name="tasks"),
             path("tasks/<uuid:task_id>/", views.task_detail, name="task-detail"),
             path("tasks/<uuid:task_id>/preview/", views.task_preview, name="task-preview"),
+            path("tasks/<uuid:task_id>/explanation/", views.task_explanation, name="task-explanation"),
         ]
 
     def get_ui_panels(self, request, context, **kwargs):

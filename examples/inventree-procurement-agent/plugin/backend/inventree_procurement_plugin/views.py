@@ -1,9 +1,13 @@
 """Authenticated task creation and read-only factual previews."""
 
 import json
+import uuid
+from datetime import timedelta
 
+from django.db import transaction
 from django.http import HttpRequest, JsonResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_GET, require_http_methods
 
@@ -137,3 +141,81 @@ def task_preview(request: HttpRequest, task_id: str) -> JsonResponse:
         "analyzed_at": task.analyzed_at.isoformat() if task.analyzed_at else None,
         "preview": task.preview,
     })
+
+
+@csrf_exempt  # Authenticate and check ownership before the protected POST helper.
+@require_http_methods(["GET", "POST"])
+def task_explanation(request: HttpRequest, task_id: str) -> JsonResponse:
+    """Read or generate a cached explanation of an owned persisted snapshot."""
+    denial = _denied(request)
+    if denial is not None:
+        return denial
+    from .models import ProcurementTask
+
+    task = get_object_or_404(ProcurementTask, pk=task_id, owner_id=request.user.pk)
+    denial = _business_denial(request)
+    if denial is not None:
+        return denial
+    if not task.preview or not task.snapshot_digest:
+        return JsonResponse({"error": "Preview is not available", "code": "preview_unavailable"}, status=409)
+    if request.method == "POST":
+        return _generate_task_explanation(request, task_id)
+    if not task.explanation or task.explanation.get("snapshot_digest") != task.snapshot_digest:
+        return JsonResponse({"error": "Explanation has not been generated", "code": "explanation_unavailable"}, status=409)
+    return JsonResponse({"explanation": task.explanation})
+
+
+@csrf_protect
+def _generate_task_explanation(request: HttpRequest, task_id: str) -> JsonResponse:
+    """Claim generation briefly, then release the DB lock during the model call."""
+    if request.body:
+        return JsonResponse({"error": "Request body must be empty", "code": "invalid_request"}, status=400)
+    from .explanation import ExplanationFailed, ExplanationUnavailable, generate_explanation
+    from .models import ProcurementTask
+
+    with transaction.atomic():
+        task = ProcurementTask.objects.select_for_update().get(pk=task_id, owner_id=request.user.pk)
+        if task.explanation and task.explanation.get("snapshot_digest") == task.snapshot_digest:
+            return JsonResponse({"explanation": task.explanation})
+        now = timezone.now()
+        if task.explanation_started_at and task.explanation_started_at > now - timedelta(seconds=60):
+            return JsonResponse({"error": "Explanation generation is in progress", "code": "explanation_busy"}, status=409)
+        run_id = uuid.uuid4()
+        task.explanation_run_id = run_id
+        task.explanation_started_at = now
+        task.save(update_fields=["explanation_run_id", "explanation_started_at", "updated_at"])
+        preview = task.preview
+        digest = task.snapshot_digest
+
+    try:
+        explanation = generate_explanation(preview, digest)
+    except (ExplanationUnavailable, ExplanationFailed) as error:
+        _release_explanation_claim(task_id, request.user.pk, run_id)
+        if isinstance(error, ExplanationUnavailable):
+            return JsonResponse({"error": "Explanation service is unavailable", "code": "explanation_unavailable"}, status=503)
+        return JsonResponse({"error": "Explanation generation failed", "code": "explanation_failed"}, status=502)
+    except Exception:
+        _release_explanation_claim(task_id, request.user.pk, run_id)
+        return JsonResponse({"error": "Explanation generation failed", "code": "explanation_failed"}, status=502)
+
+    with transaction.atomic():
+        task = ProcurementTask.objects.select_for_update().get(pk=task_id, owner_id=request.user.pk)
+        if task.explanation_run_id != run_id or task.snapshot_digest != digest:
+            return JsonResponse({"error": "Snapshot changed during generation", "code": "snapshot_changed"}, status=409)
+        explanation["generated_at"] = timezone.now().isoformat()
+        task.explanation = explanation
+        task.explanation_started_at = None
+        task.explanation_run_id = None
+        task.save(update_fields=["explanation", "explanation_started_at", "explanation_run_id", "updated_at"])
+    return JsonResponse({"explanation": explanation})
+
+
+def _release_explanation_claim(task_id: str, owner_id: int, run_id: uuid.UUID) -> None:
+    from .models import ProcurementTask
+
+    with transaction.atomic():
+        task = ProcurementTask.objects.select_for_update().get(pk=task_id, owner_id=owner_id)
+        if task.explanation_run_id == run_id:
+            task.explanation_started_at = None
+            task.explanation_run_id = None
+            task.save(update_fields=["explanation_started_at", "explanation_run_id", "updated_at"])

@@ -1,10 +1,12 @@
 # InvenTree procurement agent skeleton
 
-This example includes an **offline-verified Agent prototype** and a **native InvenTree plugin for read-only procurement facts**. In an isolated InvenTree instance, a non-superuser read-only procurement role created an analysis task from one real test Build and viewed sourced BuildLine, Part, and scoped-stock facts. Authentication, CSRF, business-role checks, owner-only reads, and persistence after restart were verified. The separate GET-only REST adapter has not been run against that instance. No real model call, durable approval, or purchase order write has been completed. The implementation is limited to this example directory.
+This example includes an **offline-verified Agent prototype** and a **native InvenTree plugin for read-only procurement facts**. In an isolated InvenTree instance, a non-superuser read-only procurement role created an analysis task from one real test Build and viewed sourced BuildLine, Part, and scoped-stock facts. Authentication, CSRF, business-role checks, owner-only reads, and persistence after restart were verified. The optional DeepSeek explanation endpoint and UI were also exercised with real `deepseek-flash` calls through the read-only snapshot tool, including a full browser creation and generation flow. The separate GET-only REST adapter has not been run against that instance. No durable approval or purchase order write has been completed. The implementation is limited to this example directory.
 
 ## Native plugin milestone
 
-The user chose an InvenTree plugin as the first integration path. `plugin/backend/` contains the installable Python package, durable task model, analysis-task creation endpoint, and read-only preview endpoint. `plugin/frontend/` contains the purchasing-page panel. [The first integration record](docs/integration_spike.md) gives the isolated Docker setup; [milestone 2 validation](docs/milestone2_integration_validation.md) records real data, HTTP, permission, restart, and browser results. [The decision record](docs/architecture_decisions.zh-CN.md) explains the tradeoffs; [the interview notes](docs/interview_notes.zh-CN.md) separate verified work from proposed capabilities. The panel shows one Build's demand lines and one stock value per Part, with sources and warnings. Supplier quotes and the model are still unconnected.
+The user chose an InvenTree plugin as the first integration path. `plugin/backend/` contains the installable Python package, durable task model, analysis-task creation endpoint, and read-only preview endpoint. `plugin/frontend/` contains the purchasing-page panel. [The first integration record](docs/integration_spike.md) gives the isolated Docker setup; [milestone 2 validation](docs/milestone2_integration_validation.md) records real data, HTTP, permission, restart, and browser results. [The decision record](docs/architecture_decisions.zh-CN.md) explains the tradeoffs; [the interview notes](docs/interview_notes.zh-CN.md) separate verified work from proposed capabilities. The panel shows one Build's demand lines and one stock value per Part, with sources and warnings.
+
+The optional explanation endpoint uses `ChatDeepSeek` with `create_deep_agent` and a single task-bound snapshot tool. It caches successful explanations by snapshot digest and keeps model text separate from deterministic facts. The [DeepSeek validation record](docs/milestone3_deepseek_integration_validation.md) reports the live checks and remaining gaps. Supplier quotes remain unconnected.
 
 ## Flow
 
@@ -52,7 +54,7 @@ The [evaluation plan](docs/evaluation_plan.md) and [18 synthetic cases](docs/fix
 From the `deepagents/` root:
 
 ```bash
-python3 -m unittest discover -s examples/inventree-procurement-agent/tests -v
+python3.11 -m unittest discover -s examples/inventree-procurement-agent/tests -v
 ```
 
 The test gateway and HTTP responses are synthetic. Tests cover shared stock aggregation, packaging and total price choice, missing quotes, explicit approval, changed inputs, quote expiry, repeated execution, a lost create response in the fake gateway, REST pagination and filters, permissions, timeouts, field mapping, and disabled writes. No network, model credentials, or InvenTree installation are needed.

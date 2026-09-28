@@ -50,6 +50,15 @@ class FakeManager:
         self.owner_filters.append(owner_id)
         return FakeQuerySet(task for task in self.tasks if task.owner_id == owner_id)
 
+    def select_for_update(self):
+        return self
+
+    def get(self, pk: str, owner_id: int):
+        for task in self.tasks:
+            if task.id == str(pk) and task.owner_id == owner_id:
+                return task
+        raise LookupError("task not found for owner")
+
 
 class FakeTask:
     def __init__(self, owner_id: int):
@@ -62,6 +71,12 @@ class FakeTask:
         self.created_at = datetime(2026, 9, 28, tzinfo=timezone.utc)
         self.updated_at = self.created_at
         self.analyzed_at = self.created_at
+        self.explanation = {}
+        self.explanation_started_at = None
+        self.explanation_run_id = None
+
+    def save(self, update_fields):
+        self.updated_at = datetime(2026, 9, 28, tzinfo=timezone.utc)
 
 
 class ViewTests(unittest.TestCase):
@@ -71,6 +86,13 @@ class ViewTests(unittest.TestCase):
         http = types.ModuleType("django.http")
         http.HttpRequest = FakeRequest
         http.JsonResponse = FakeJsonResponse
+        db = types.ModuleType("django.db")
+        from contextlib import nullcontext
+        db.transaction = types.SimpleNamespace(atomic=nullcontext)
+        utils = types.ModuleType("django.utils")
+        utils.__path__ = []
+        django_timezone = types.ModuleType("django.utils.timezone")
+        django_timezone.now = lambda: datetime(2026, 9, 28, tzinfo=timezone.utc)
         shortcuts = types.ModuleType("django.shortcuts")
         def lookup(model, **filters):
             for task in model.objects.tasks:
@@ -91,6 +113,9 @@ class ViewTests(unittest.TestCase):
         modules = {
             "django": django,
             "django.http": http,
+            "django.db": db,
+            "django.utils": utils,
+            "django.utils.timezone": django_timezone,
             "django.shortcuts": shortcuts,
             "django.views": views_package,
             "django.views.decorators": decorators,
@@ -152,6 +177,52 @@ class ViewTests(unittest.TestCase):
             response = self.views.task_preview(FakeRequest(FakeUser(True, 7)), "task-1")
         self.assertEqual(response.data["preview"], {"schema_version": 1, "lines": []})
         self.assertEqual(response.data["snapshot_digest"], "digest")
+
+    def test_explanation_requires_generation_and_reuses_matching_cache(self) -> None:
+        task = FakeTask(7)
+        manager = FakeManager([task])
+        models = types.ModuleType("inventree_procurement_plugin.models")
+        models.ProcurementTask = types.SimpleNamespace(objects=manager)
+        request = FakeRequest(FakeUser(True, 7))
+        with patch.dict(sys.modules, {"inventree_procurement_plugin.models": models}), \
+                patch.object(self.views, "check_business_read_permissions"):
+            self.assertEqual(self.views.task_explanation(request, "task-1").status_code, 409)
+            task.explanation = {"text": "Cached", "snapshot_digest": "digest"}
+            self.assertEqual(self.views.task_explanation(request, "task-1").data["explanation"]["text"], "Cached")
+            request.method = "POST"
+            self.assertEqual(self.views.task_explanation(request, "task-1").data["explanation"]["text"], "Cached")
+            task.snapshot_digest = "new-digest"
+            request.method = "GET"
+            self.assertEqual(self.views.task_explanation(request, "task-1").status_code, 409)
+
+    def test_explanation_denies_other_owner_and_revoked_business_permission(self) -> None:
+        from inventree_procurement_plugin.service import BusinessReadDenied
+
+        manager = FakeManager([FakeTask(7)])
+        models = types.ModuleType("inventree_procurement_plugin.models")
+        models.ProcurementTask = types.SimpleNamespace(objects=manager)
+        with patch.dict(sys.modules, {"inventree_procurement_plugin.models": models}):
+            with self.assertRaises(LookupError):
+                self.views.task_explanation(FakeRequest(FakeUser(True, 8)), "task-1")
+            with patch.object(self.views, "check_business_read_permissions", side_effect=BusinessReadDenied()):
+                self.assertEqual(self.views.task_explanation(FakeRequest(FakeUser(True, 7)), "task-1").status_code, 403)
+
+    def test_explanation_unexpected_failure_releases_generation_claim(self) -> None:
+        from inventree_procurement_plugin import explanation
+
+        task = FakeTask(7)
+        manager = FakeManager([task])
+        models = types.ModuleType("inventree_procurement_plugin.models")
+        models.ProcurementTask = types.SimpleNamespace(objects=manager)
+        request = FakeRequest(FakeUser(True, 7), method="POST")
+        with patch.dict(sys.modules, {"inventree_procurement_plugin.models": models}), \
+                patch.object(self.views, "check_business_read_permissions"), \
+                patch.object(explanation, "generate_explanation", side_effect=RuntimeError("secret provider details")):
+            response = self.views.task_explanation(request, "task-1")
+        self.assertEqual(response.status_code, 502)
+        self.assertNotIn("secret", str(response.data))
+        self.assertIsNone(task.explanation_run_id)
+        self.assertIsNone(task.explanation_started_at)
 
     def test_post_validates_one_build_id_and_creates_task(self) -> None:
         task = FakeTask(7)

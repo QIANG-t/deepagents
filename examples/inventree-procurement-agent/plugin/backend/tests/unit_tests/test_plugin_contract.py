@@ -39,6 +39,7 @@ class PluginContractTests(unittest.TestCase):
         views.tasks = lambda request: None
         views.task_detail = lambda request, task_id: None
         views.task_preview = lambda request, task_id: None
+        views.task_explanation = lambda request, task_id: None
         self.package = importlib.import_module("inventree_procurement_plugin")
         self.old_views = getattr(self.package, "views", None)
         self.package.views = views
@@ -65,7 +66,8 @@ class PluginContractTests(unittest.TestCase):
     def test_slug_and_task_routes_are_registered(self) -> None:
         self.assertEqual(self.instance.SLUG, "inventree_procurement")
         self.assertEqual([route for route, _, _ in self.instance.setup_urls()], [
-            "health/", "tasks/", "tasks/<uuid:task_id>/", "tasks/<uuid:task_id>/preview/"
+            "health/", "tasks/", "tasks/<uuid:task_id>/", "tasks/<uuid:task_id>/preview/",
+            "tasks/<uuid:task_id>/explanation/"
         ])
 
     def test_panel_requires_login_context_and_bundle(self) -> None:
