@@ -78,6 +78,28 @@ export type Quote = {
   tool_calls: { name: 'read_quote_snapshot'; status: 'success'; tool_call_id: string; result_sha256: string }[];
 };
 
+export type DecisionPreviewRow = {
+  part_id: number;
+  name: string;
+  units: string;
+  preliminary_shortage: Fact;
+  supplier_part_id: number | null;
+  quote_unit_price: Fact;
+  quote_currency: string | null;
+  quote_price_unit: string | null;
+  blockers: { code: string; message: string }[];
+  order_quantity: null;
+  estimated_total: null;
+};
+
+export type DecisionPreview = {
+  task_id: string;
+  snapshot_digest: string;
+  quote_source_sha256: string | null;
+  status: 'needs_review';
+  rows: DecisionPreviewRow[];
+};
+
 export const MAX_QUOTE_BYTES = 8192;
 
 function record(value: unknown): Record<string, unknown> | null {
@@ -283,6 +305,44 @@ export function parseQuote(value: unknown): Quote | null {
       status: check!.status as 'match' | 'conflict' | 'unverified', message: check!.message as string })),
     tool_calls: calls.map((call) => ({ name: 'read_quote_snapshot', status: 'success',
       tool_call_id: call!.tool_call_id as string, result_sha256: call!.result_sha256 as string }))
+  };
+}
+
+export function parseDecisionPreview(value: unknown): DecisionPreview | null {
+  const body = record(value);
+  if (!body || typeof body.task_id !== 'string' || !body.task_id.trim() ||
+      typeof body.snapshot_digest !== 'string' || !/^[a-f0-9]{64}$/.test(body.snapshot_digest) ||
+      (body.quote_source_sha256 !== null &&
+        (typeof body.quote_source_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(body.quote_source_sha256))) ||
+      body.status !== 'needs_review' || !Array.isArray(body.rows)) return null;
+  const rows: DecisionPreviewRow[] = [];
+  for (const value of body.rows) {
+    const row = record(value);
+    if (!row || id(row.part_id) === null || typeof row.name !== 'string' || !row.name.trim() ||
+        typeof row.units !== 'string' || typeof row.preliminary_shortage !== 'string' && row.preliminary_shortage !== null ||
+        (row.preliminary_shortage !== null && fact(row.preliminary_shortage) === null) ||
+        (row.supplier_part_id !== null && id(row.supplier_part_id) === null) ||
+        (row.quote_unit_price !== null && fact(row.quote_unit_price) === null) ||
+        (row.quote_currency !== null && (typeof row.quote_currency !== 'string' || !row.quote_currency.trim())) ||
+        (row.quote_price_unit !== null && (typeof row.quote_price_unit !== 'string' || !row.quote_price_unit.trim())) ||
+        !Array.isArray(row.blockers) || row.order_quantity !== null || row.estimated_total !== null) return null;
+    const blockers = row.blockers.map(record);
+    if (blockers.some((item) => !item || typeof item.code !== 'string' || !item.code.trim() ||
+        typeof item.message !== 'string' || !item.message.trim())) return null;
+    rows.push({
+      part_id: row.part_id as number, name: row.name, units: row.units,
+      preliminary_shortage: row.preliminary_shortage as Fact,
+      supplier_part_id: row.supplier_part_id as number | null,
+      quote_unit_price: row.quote_unit_price as Fact,
+      quote_currency: row.quote_currency as string | null,
+      quote_price_unit: row.quote_price_unit as string | null,
+      blockers: blockers.map((item) => ({ code: item!.code as string, message: item!.message as string })),
+      order_quantity: null, estimated_total: null
+    });
+  }
+  return {
+    task_id: body.task_id, snapshot_digest: body.snapshot_digest,
+    quote_source_sha256: body.quote_source_sha256 as string | null, status: 'needs_review', rows
   };
 }
 

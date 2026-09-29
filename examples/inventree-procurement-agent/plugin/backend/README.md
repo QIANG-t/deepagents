@@ -42,7 +42,7 @@ The optional panel uses `UserInterfaceMixin.get_ui_panels`. It is offered only t
 
 ## Package and asset layout
 
-The Python package exposes the `inventree_plugins` entry point in `pyproject.toml`. Its Django app name is `inventree_procurement_plugin`. Migration `0001_initial` creates a UUID task table; `0002_task_preview` adds the durable preview and analysis timestamp; `0003_task_explanation` adds the explanation cache and generation claim; `0004_task_quote` adds the quote cache and generation claim. Existing shell-seeded tasks remain readable and return 409 for preview until analyzed through a new task.
+The Python package exposes the `inventree_plugins` entry point in `pyproject.toml`. Its Django app name is `inventree_procurement_plugin`. Migration `0001_initial` creates a UUID task table; `0002_task_preview` adds the durable preview and analysis timestamp; `0003_task_explanation` adds the explanation cache and generation claim; `0004_task_quote` adds the quote cache and generation claim. The read-only `decision-preview` route derives a review checklist from these saved fields and adds no table or migration. Existing shell-seeded tasks remain readable and return 409 for preview until analyzed through a new task.
 
 Build the frontend from `../frontend/`, then copy only its output into this package before building/installing the backend:
 

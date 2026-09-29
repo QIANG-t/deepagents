@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { displayFact, isCurrentExplanation, MAX_QUOTE_BYTES, parseBuildId, parseCreatedTask, parseExplanation, parsePreview, parseQuote, parseSupplierPartId, quoteByteLength, requestError, responseCode, responseStatus, validQuoteText } from './contracts.ts';
+import { displayFact, isCurrentExplanation, MAX_QUOTE_BYTES, parseBuildId, parseCreatedTask, parseDecisionPreview, parseExplanation, parsePreview, parseQuote, parseSupplierPartId, quoteByteLength, requestError, responseCode, responseStatus, validQuoteText } from './contracts.ts';
 
 test('accepts one positive safe build ID only', () => {
   assert.equal(parseBuildId('42'), 42);
@@ -101,4 +101,28 @@ test('saved quote requires exact source evidence and actual tool call', () => {
   assert.equal(parseQuote({ quote: { ...quote, tool_calls: [] } }), null);
   assert.equal(parseQuote({ quote: { ...quote, tool_calls: [{ ...quote.tool_calls[0], name: 'write_purchase_order' }] } }), null);
   assert.equal(parseQuote({ quote: { ...quote, source_sha256: 'bad' } }), null);
+});
+
+test('decision preview never accepts a proposed order quantity or total', () => {
+  const row = {
+    part_id: 4, name: 'Part', units: 'pcs', preliminary_shortage: '12',
+    supplier_part_id: 7, quote_unit_price: '2.50', quote_currency: 'USD',
+    quote_price_unit: 'pcs', blockers: [{ code: 'incoming_supply', message: 'Check incoming supply.' }],
+    order_quantity: null, estimated_total: null
+  };
+  const payload = {
+    task_id: 'task-1', snapshot_digest: 'a'.repeat(64),
+    quote_source_sha256: 'b'.repeat(64), status: 'needs_review', rows: [row]
+  };
+  assert.deepEqual(parseDecisionPreview(payload), payload);
+  assert.deepEqual(parseDecisionPreview({ ...payload, quote_source_sha256: null, rows: [{
+    ...row, supplier_part_id: null, quote_unit_price: null, quote_currency: null, quote_price_unit: null
+  }] })?.quote_source_sha256, null);
+  assert.equal(parseDecisionPreview({ ...payload, status: 'approved' }), null);
+  assert.equal(parseDecisionPreview({ ...payload, rows: [{ ...row, order_quantity: '12' }] }), null);
+  assert.equal(parseDecisionPreview({ ...payload, rows: [{ ...row, estimated_total: '30.00' }] }), null);
+  assert.equal(parseDecisionPreview({ ...payload, rows: [{ ...row, estimated_total: undefined }] }), null);
+  assert.equal(parseDecisionPreview({ ...payload, rows: [{ ...row, preliminary_shortage: 'bad' }] }), null);
+  assert.equal(parseDecisionPreview({ ...payload, rows: [{ ...row, blockers: [{ code: '', message: 'Check' }] }] }), null);
+  assert.equal(parseDecisionPreview({ ...payload, quote_source_sha256: '' }), null);
 });

@@ -13,6 +13,7 @@ from django.views.decorators.csrf import csrf_exempt, csrf_protect
 from django.views.decorators.http import require_GET, require_http_methods
 
 from .access import read_status
+from .decision_preview import make_decision_preview
 from .service import BusinessReadDenied, BuildMissing, check_business_read_permissions, create_analysis_task
 from .quote import MAX_QUOTE_BYTES, QuoteFailed, QuoteUnavailable, compare_quote, extract_quote
 from .quote_service import SupplierPartMissing, check_supplier_read_permissions, supplier_part_snapshot
@@ -144,6 +145,35 @@ def task_preview(request: HttpRequest, task_id: str) -> JsonResponse:
         "analyzed_at": task.analyzed_at.isoformat() if task.analyzed_at else None,
         "preview": task.preview,
     })
+
+
+@require_GET
+def task_decision_preview(request: HttpRequest, task_id: str) -> JsonResponse:
+    """Return review blockers for an owned task without proposing a purchase."""
+    denial = _denied(request)
+    if denial is not None:
+        return denial
+    from .models import ProcurementTask
+
+    task = get_object_or_404(ProcurementTask, pk=task_id, owner_id=request.user.pk)
+    denial = _business_denial(request)
+    if denial is not None:
+        return denial
+    if not task.preview or not task.snapshot_digest:
+        return JsonResponse({"error": "Preview is not available", "code": "preview_unavailable"}, status=409)
+    supplier_snapshot = None
+    if task.quote:
+        try:
+            supplier_snapshot = supplier_part_snapshot(
+                request.user, task.quote["supplier_part_id"], task.preview
+            )
+        except BusinessReadDenied:
+            return JsonResponse({"error": "Supplier pricing read permission denied", "code": "forbidden"}, status=403)
+        except SupplierPartMissing:
+            return JsonResponse({"error": "Linked SupplierPart was not found", "code": "supplier_part_not_found"}, status=404)
+    return JsonResponse(make_decision_preview(
+        str(task.id), task.snapshot_digest, task.preview, task.quote, supplier_snapshot
+    ))
 
 
 @csrf_exempt  # Authenticate and check ownership before the protected POST helper.
@@ -318,7 +348,9 @@ def _create_task_quote(request: HttpRequest, task_id: str) -> JsonResponse:
     except Exception:
         _release_quote_claim(task_id, request.user.pk, run_id)
         return JsonResponse({"error": "Quote extraction failed", "code": "quote_failed"}, status=502)
-    quote = {"supplier_part_id": supplier_part_id, "source_sha256": source_hash,
+    quote = {"supplier_part_id": supplier_part_id, "part_id": supplier_snapshot["part_id"],
+             "snapshot_digest": digest,
+             "source_sha256": source_hash,
              "source_text": source_text, "created_at": timezone.now().isoformat(),
              "extracted": extraction["extracted"],
              "checks": compare_quote(extraction["extracted"], supplier_snapshot, source_text),

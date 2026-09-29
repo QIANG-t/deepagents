@@ -2,9 +2,9 @@
 
 ## 一分钟说明
 
-“我以 InvenTree 的生产单采购为场景，做了一个可审计的采购分析 Agent。原生插件在隔离实例跑通真实数据只读预览：测试单两条同物料需求 4 和 6，可用库存 5 只计一次，初步缺口为 5。我验证了普通采购查看角色、CSRF、任务归属和重启恢复。用户再粘贴一份匿名报价，DeepSeek 通过任务绑定的只读工具抽取字段，服务端核对原文位置，并标出与 SupplierPart 的冲突或待核实项。十五个合成报价各跑三次，最新版本通过 44/45；不合格的模型结果被拒绝，采购单写入仍关闭。”
+“我以 InvenTree 的生产单采购为场景，做了一个可审计的采购分析 Agent。原生插件在隔离实例跑通真实数据只读预览：测试单两条同物料需求 4 和 6，可用库存 5 只计一次，初步缺口为 5。我验证了普通采购查看角色、CSRF、任务归属和重启恢复。用户再粘贴一份匿名报价，DeepSeek 通过任务绑定的只读工具抽取字段，服务端核对原文位置，并标出与 SupplierPart 的冲突或待核实项。十五个合成报价各跑三次，通过 44/45；不合格的模型结果被拒绝。最后由确定性代码生成只读决策预览，列出在途、单位换算和价格档位等阻断项，订货数量与总价保持空值，采购单写入仍关闭。”
 
-说完后按实际情况展示：[设计决策](architecture_decisions.zh-CN.md)、[第二阶段联调](milestone2_integration_validation.md)、[第三阶段联调](milestone3_deepseek_integration_validation.md)、[报价联调与评测](milestone4_quote_eval_v1_report.zh-CN.md)、[扩大评测与失败归因](milestone5_quote_eval_v2_report.zh-CN.md)。演示前先核对这些文件中的最新结果。
+说完后按实际情况展示：[设计决策](architecture_decisions.zh-CN.md)、[第二阶段联调](milestone2_integration_validation.md)、[第三阶段联调](milestone3_deepseek_integration_validation.md)、[报价联调与评测](milestone4_quote_eval_v1_report.zh-CN.md)、[扩大评测与失败归因](milestone5_quote_eval_v2_report.zh-CN.md)、[只读决策预览](milestone6_decision_preview.zh-CN.md)。演示前先核对这些文件中的最新结果。
 
 ## 架构图
 
@@ -15,7 +15,7 @@ flowchart LR
     C --> G[Build 与 BuildLine 只读查询]
     C --> D[DeepSeek + Deep Agents 只读解释]
     C --> E[粘贴报价、字段证据与保守核对]
-    E -. 待验证 .-> F[确定性采购规划]
+    E --> F[确定性只读决策预览]
     F -. 待验证 .-> H[人工审批与待处理草稿]
 ```
 
@@ -32,4 +32,4 @@ flowchart LR
 
 ## 如实说明边界
 
-第二阶段插件已显示一张真实测试生产单的需求行、按 Part 去重的库存、初步缺口、来源和警示。第三阶段真实 DeepSeek 调用、工具执行证据、HTTP 权限与缓存、浏览器生成和重启读取已在隔离实例验证。第四阶段接入了手工粘贴的匿名供应商报价，并完成真实 HTTP、浏览器和 7×3 合成评测。第五阶段把评测扩至 15×3，并记录固定失败类别；只有明确标签且同语义的无单位包装量才直接比较。价格档位、其他包装单位换算、交期与有效期的业务核对仍需人工确认；附件、RAG、审批和采购单写入未接入。单例正确不代表模型对所有生产单都准确，也没有测量与现有采购向导的完整对比成绩。具体证据见[第二阶段联调](milestone2_integration_validation.md)、[第三阶段联调](milestone3_deepseek_integration_validation.md)、[第四阶段评测](milestone4_quote_eval_v1_report.zh-CN.md)和[第五阶段评测](milestone5_quote_eval_v2_report.zh-CN.md)。
+第二阶段插件已显示一张真实测试生产单的需求行、按 Part 去重的库存、初步缺口、来源和警示。第三阶段真实 DeepSeek 调用、工具执行证据、HTTP 权限与缓存、浏览器生成和重启读取已在隔离实例验证。第四阶段接入了手工粘贴的匿名供应商报价，并完成真实 HTTP、浏览器和 7×3 合成评测。第五阶段把评测扩至 15×3，并记录固定失败类别；只有明确标签且同语义的无单位包装量才直接比较。第六阶段接入了只读决策预览，逐 Part 显示初步缺口、关联报价和阻断原因，订货数量与总价保持未知。价格档位、其他包装单位换算、交期与有效期的业务核对仍需人工确认；附件、RAG、审批和采购单写入未接入。单例正确不代表模型对所有生产单都准确，也没有测量与现有采购向导的完整对比成绩。具体证据见[第二阶段联调](milestone2_integration_validation.md)、[第三阶段联调](milestone3_deepseek_integration_validation.md)、[第四阶段评测](milestone4_quote_eval_v1_report.zh-CN.md)、[第五阶段评测](milestone5_quote_eval_v2_report.zh-CN.md)和[第六阶段联调](milestone6_decision_preview.zh-CN.md)。

@@ -5,6 +5,7 @@ import { displayFact, parseBuildId, parseCreatedTask, parsePreview, parseTasks, 
 import type { Preview, PreviewLine, PreviewPart, Task } from './contracts';
 import { ExplanationPanel } from './ExplanationPanel';
 import { QuotePanel } from './QuotePanel';
+import { DecisionPreviewPanel } from './DecisionPreviewPanel';
 
 const BASE_URL = '/plugin/inventree_procurement/';
 type LoadState = 'idle' | 'checking' | 'available' | 'unavailable';
@@ -263,6 +264,9 @@ function ProcurementPanel({ context }: { context: InvenTreePluginContext }) {
               snapshotDigest={preview.snapshot_digest} />}
           {previewState === 'available' && preview && selectedTask &&
             <QuotePanel key={`quote-${selectedTask}`} context={context} taskId={selectedTask} />}
+          {previewState === 'available' && preview && selectedTask &&
+            <DecisionPreviewPanel key={`decision-${selectedTask}`} context={context} taskId={selectedTask}
+              snapshotDigest={preview.snapshot_digest} />}
         </Stack>
 
         <Text size="xs" c="dimmed">

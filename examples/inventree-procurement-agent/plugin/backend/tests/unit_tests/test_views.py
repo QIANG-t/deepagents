@@ -181,6 +181,61 @@ class ViewTests(unittest.TestCase):
         self.assertEqual(response.data["preview"], {"schema_version": 1, "lines": []})
         self.assertEqual(response.data["snapshot_digest"], "digest")
 
+    def test_decision_preview_without_quote_is_read_only(self) -> None:
+        task = FakeTask(7)
+        task.preview = {"parts": [{"part_id": 2, "name": "Part 2", "units": "",
+                                   "preliminary_shortage": {"value": "5"}}]}
+        manager = FakeManager([task])
+        models = types.ModuleType("inventree_procurement_plugin.models")
+        models.ProcurementTask = types.SimpleNamespace(objects=manager)
+        with patch.dict(sys.modules, {"inventree_procurement_plugin.models": models}), \
+                patch.object(self.views, "check_business_read_permissions"), \
+                patch.object(self.views, "supplier_part_snapshot") as supplier_read:
+            response = self.views.task_decision_preview(FakeRequest(FakeUser(True, 7)), "task-1")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data["status"], "needs_review")
+        self.assertEqual(response.data["rows"][0]["preliminary_shortage"], "5")
+        self.assertIsNone(response.data["rows"][0]["order_quantity"])
+        self.assertIsNone(response.data["rows"][0]["estimated_total"])
+        supplier_read.assert_not_called()
+
+    def test_decision_preview_checks_owner_and_current_permissions(self) -> None:
+        from inventree_procurement_plugin.service import BusinessReadDenied
+        from inventree_procurement_plugin.quote_service import SupplierPartMissing
+
+        task = FakeTask(7)
+        task.preview = {"parts": [{"part_id": 2, "name": "Part 2", "units": "",
+                                   "preliminary_shortage": {"value": "5"}}]}
+        task.quote = {"supplier_part_id": 9, "part_id": 2, "snapshot_digest": "digest",
+                      "source_sha256": "a" * 64,
+                      "source_text": "SKU X", "extracted": {
+                          "supplier_name": None, "sku": None, "unit_price": None,
+                          "currency": None, "price_unit": None, "pack_quantity": None,
+                          "valid_until": None, "lead_time": None}}
+        manager = FakeManager([task])
+        models = types.ModuleType("inventree_procurement_plugin.models")
+        models.ProcurementTask = types.SimpleNamespace(objects=manager)
+        request = FakeRequest(FakeUser(True, 7))
+        with patch.dict(sys.modules, {"inventree_procurement_plugin.models": models}):
+            with self.assertRaises(LookupError):
+                self.views.task_decision_preview(FakeRequest(FakeUser(True, 8)), "task-1")
+            with patch.object(self.views, "check_business_read_permissions", side_effect=BusinessReadDenied()):
+                self.assertEqual(self.views.task_decision_preview(request, "task-1").status_code, 403)
+            with patch.object(self.views, "check_business_read_permissions"), \
+                    patch.object(self.views, "supplier_part_snapshot", side_effect=BusinessReadDenied()):
+                self.assertEqual(self.views.task_decision_preview(request, "task-1").status_code, 403)
+            with patch.object(self.views, "check_business_read_permissions"), \
+                    patch.object(self.views, "supplier_part_snapshot", side_effect=SupplierPartMissing()):
+                self.assertEqual(self.views.task_decision_preview(request, "task-1").status_code, 404)
+            with patch.object(self.views, "check_business_read_permissions"), \
+                    patch.object(self.views, "supplier_part_snapshot", return_value={
+                        "part_id": 2, "supplier_name": "Supplier", "sku": "X",
+                        "part_units": "", "pack_quantity_native": "5"}) as supplier_read:
+                response = self.views.task_decision_preview(request, "task-1")
+            self.assertEqual(response.status_code, 200)
+            self.assertEqual(response.data["rows"][0]["supplier_part_id"], 9)
+            supplier_read.assert_called_once_with(request.user, 9, task.preview)
+
     def test_explanation_requires_generation_and_reuses_matching_cache(self) -> None:
         task = FakeTask(7)
         manager = FakeManager([task])
@@ -314,7 +369,8 @@ class ViewTests(unittest.TestCase):
         source = "SKU X-2"
         request = FakeRequest(FakeUser(True, 7), method="POST",
                               body=json.dumps({"supplier_part_id": 1, "text": source}).encode())
-        snapshot = {"supplier_name": "Acme", "sku": "X-2", "pack_quantity_native": None}
+        snapshot = {"part_id": 3, "supplier_name": "Acme", "sku": "X-2",
+                    "pack_quantity_native": None}
         extracted = {field: None for field in ("supplier_name", "sku", "unit_price",
                     "currency", "price_unit", "pack_quantity", "valid_until", "lead_time")}
         with patch.dict(sys.modules, {"inventree_procurement_plugin.models": models}), \
@@ -333,6 +389,8 @@ class ViewTests(unittest.TestCase):
         self.assertEqual(read.status_code, 200)
         self.assertEqual(changed.status_code, 409)
         self.assertEqual(first.data["quote"]["source_text"], source)
+        self.assertEqual(first.data["quote"]["part_id"], 3)
+        self.assertEqual(first.data["quote"]["snapshot_digest"], "digest")
         model.assert_called_once()
 
 

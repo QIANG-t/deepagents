@@ -39,6 +39,7 @@ class PluginContractTests(unittest.TestCase):
         views.tasks = lambda request: None
         views.task_detail = lambda request, task_id: None
         views.task_preview = lambda request, task_id: None
+        views.task_decision_preview = lambda request, task_id: None
         views.task_explanation = lambda request, task_id: None
         views.task_quote = lambda request, task_id: None
         self.package = importlib.import_module("inventree_procurement_plugin")
@@ -68,6 +69,7 @@ class PluginContractTests(unittest.TestCase):
         self.assertEqual(self.instance.SLUG, "inventree_procurement")
         self.assertEqual([route for route, _, _ in self.instance.setup_urls()], [
             "health/", "tasks/", "tasks/<uuid:task_id>/", "tasks/<uuid:task_id>/preview/",
+            "tasks/<uuid:task_id>/decision-preview/",
             "tasks/<uuid:task_id>/explanation/", "tasks/<uuid:task_id>/quote/"
         ])
 

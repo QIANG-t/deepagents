@@ -28,6 +28,7 @@ class InvenTreeProcurementAgent(AppMixin, UrlsMixin, UserInterfaceMixin, InvenTr
             path("tasks/", views.tasks, name="tasks"),
             path("tasks/<uuid:task_id>/", views.task_detail, name="task-detail"),
             path("tasks/<uuid:task_id>/preview/", views.task_preview, name="task-preview"),
+            path("tasks/<uuid:task_id>/decision-preview/", views.task_decision_preview, name="task-decision-preview"),
             path("tasks/<uuid:task_id>/explanation/", views.task_explanation, name="task-explanation"),
             path("tasks/<uuid:task_id>/quote/", views.task_quote, name="task-quote"),
         ]
